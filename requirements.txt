@@ -1,0 +1,16 @@
+# Core dependencies for Checkpoint 0.1 (Development Environment Setup)
+# Additional dependencies (feature engineering, ML, API framework, etc.)
+# are added in later checkpoints as those modules are implemented —
+# keeping this minimal now avoids installing unused packages.
+
+# Database connectivity
+psycopg[binary]==3.2.13
+redis==5.2.0
+
+# Configuration
+python-dotenv==1.0.1
+PyYAML==6.0.2
+
+# Testing
+pytest==8.3.3
+pytest-cov==5.0.0
