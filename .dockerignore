@@ -1,0 +1,73 @@
+# Docker Build Ignore File
+#
+# Files and directories that should NOT be included in Docker images
+# (keeps images smaller, faster, and more secure)
+
+# Version control
+.git
+.gitignore
+.gitattributes
+
+# Documentation (not needed in runtime image)
+README.md
+FOLDER_STRUCTURE.md
+*.md
+docs/
+
+# Development artifacts
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+
+# Python cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.tox/
+
+# Virtual environments (not needed, will install in container)
+venv/
+.venv/
+env/
+
+# Test data (use fixtures instead)
+tests/
+notebooks/
+
+# Large data files
+data/
+*.pkl
+*.pickle
+*.joblib
+
+# Build artifacts
+build/
+dist/
+*.egg
+
+# Environment files (secrets - never in image)
+.env
+.env.*
+*.pem
+*.key
+
+# Editor files
+.editorconfig
+.pre-commit-config.yaml
+
+# Logs
+*.log
+logs/
+
+# OS files
+Thumbs.db
+.directory
+
+# Temporary
+*.tmp
+*.temp

@@ -1,42 +1,169 @@
-# Environment & secrets
-.env
-*.env.local
+# ============================================================================
+# ENVIRONMENT & SECRETS
+# ============================================================================
+# NEVER commit actual secrets or .env files with real credentials
+.env                      # Actual environment variables (local only)
+.env.local               # Alternative local env file
+.env.*.local             # Environment-specific local files
+*.pem                    # Private keys
+*.key                    # Private keys
+secrets.json            # Local secrets file
 
-# Python
+# ============================================================================
+# PYTHON
+# ============================================================================
 __pycache__/
-*.py[cod]
+*.py[cod]               # .pyc, .pyo, .pyd
 *$py.class
+*.so
+*.egg
 *.egg-info/
 .eggs/
+
+# Virtual environments (each developer has their own)
 venv/
 .venv/
 env/
+ENV/
+.env/
+virtualenv/
+
+# Build artifacts
 build/
 dist/
+*.egg-info/
+pip-log.txt
+pip-delete-this-directory.txt
 
-# Testing & coverage
+# Compiler/formatter caches
+.ruff_cache/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# ============================================================================
+# TESTING & COVERAGE
+# ============================================================================
 .pytest_cache/
 .coverage
+.coverage.*
 htmlcov/
-.mypy_cache/
-.ruff_cache/
+.tox/
+.hypothesis/
+.coverage.xml
+coverage.xml
 
-# Data (local artifacts not committed; subfolder structure added in Checkpoint 0.3)
+# ============================================================================
+# DATA & ARTIFACTS (NOT COMMITTED)
+# ============================================================================
+# Raw/processed data, models, cache - generated locally, not shared
 data/*
 !data/.gitkeep
 !data/README.md
 
-# Logs
+notebooks/.ipynb_checkpoints/
+*.ipynb_checkpoints/
+
+# Trained models (too large to commit)
+*.pkl
+*.pickle
+*.joblib
+*.h5
+*.pth
+*.pt
+
+# Cache files
+*.cache
+.cache/
+
+# ============================================================================
+# LOGS & TEMPORARY FILES
+# ============================================================================
 *.log
 logs/
-
-# IDE
-.vscode/
-.idea/
+*.tmp
+*.temp
 *.swp
+*~
+.~lock*
 
-# OS
+# ============================================================================
+# IDE & EDITOR
+# ============================================================================
+# VSCode
+.vscode/
+*.code-workspace
+
+# PyCharm/IntelliJ
+.idea/
+*.iml
+*.iws
+out/
+
+# Sublime
+*.sublime-project
+*.sublime-workspace
+
+# Vim/Neovim
+.vim/
+*.vim
+.nvimrc
+
+# General
+*.swp
+*.swo
+*~
 .DS_Store
-Thumbs.db
 
-# Docker volumes are managed by Docker, not git
+# ============================================================================
+# OS-SPECIFIC
+# ============================================================================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# Linux
+.directory
+
+# ============================================================================
+# DOCKER
+# ============================================================================
+# Docker volumes are managed by Docker daemon, not git
+# Data persists in named volumes, not in repo filesystem
+.dockerignore is maintained separately
+
+# Local Docker artifacts
+.docker/
+
+# ============================================================================
+# DOCUMENTATION BUILDS
+# ============================================================================
+docs/_build/
+site/
+
+# ============================================================================
+# MISC
+# ============================================================================
+# Backups
+*.bak
+*.backup
+*.orig
+
+# OS-generated backups
+*~
+
+# Notes/scratch
+notes/
+scratch/
+TODO.txt

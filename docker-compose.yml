@@ -1,0 +1,275 @@
+version: '3.8'
+
+# Docker Compose Configuration for Repository Intelligence Engine Development
+#
+# This file defines all services needed for local development:
+# - PostgreSQL 17 (primary data store)
+# - Redis (caching layer)
+# - pgAdmin (database management UI)
+#
+# Philosophy:
+# - All data persisted in named volumes (survives container restarts)
+# - Health checks ensure services are truly ready
+# - Restart policies provide automatic recovery
+# - Dedicated network isolates services from host and other projects
+#
+# Usage:
+#   docker compose up -d          # Start all services
+#   docker compose down           # Stop all services
+#   docker compose logs -f        # Stream logs
+#   docker compose exec postgres psql -U repo_user -d ai_analytics  # Connect to DB
+
+services:
+  # PostgreSQL 17 - Primary operational database
+  #
+  # Why PostgreSQL?
+  # - ACID transactions ensure data integrity
+  # - Complex queries (JOINs, aggregations, window functions)
+  # - Full-text search built-in (FTS)
+  # - pgvector extension for embeddings
+  # - Proven at scale by every major company
+  # - Mature ecosystem with excellent tools
+  #
+  # Version 17: Latest stable, includes performance improvements
+  postgres:
+    image: postgres:17-alpine
+    container_name: repo_intelligence_postgres
+
+    # Service name used for internal communication
+    # (other containers use: postgres:5432)
+
+    environment:
+      # Initial admin user (SUPERUSER)
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:-postgres_admin}
+
+      # Initial database to create
+      POSTGRES_DB: ai_analytics
+
+      # Environment variables for initialization script (if used)
+      POSTGRES_INITDB_ARGS: "-c max_connections=200"
+
+    # Volume mounts
+    volumes:
+      # Named volume: data persists across container restarts
+      # Location: /var/lib/docker/volumes/repo_intelligence_data/_data
+      - repo_intelligence_data:/var/lib/postgresql/data
+
+      # Initialization script (creates application user)
+      - ./scripts/init-postgres.sql:/docker-entrypoint-initdb.d/01-init.sql
+
+    # Port mapping: host:container
+    # Only expose on localhost for security
+    ports:
+      - "127.0.0.1:5432:5432"
+
+    # Health check: verify database is accepting connections
+    # Wait 10 seconds for startup, then check every 5 seconds
+    # If 3 consecutive checks fail, mark unhealthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+    # Restart policy: automatically restart on failure
+    restart: unless-stopped
+
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # Resource limits (prevent runaway container)
+    # Adjust based on your machine's capabilities
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
+
+  # Redis - In-memory cache and session store
+  #
+  # Why Redis?
+  # - Sub-millisecond latency (perfect for caching)
+  # - Atomic operations (thread-safe)
+  # - Built-in data structures (sets, sorted sets, hashes)
+  # - TTL/expiration (automatic cleanup)
+  # - Pub/sub for real-time features
+  # - Proven in production (nearly every large app uses it)
+  #
+  # Use for:
+  # - Query result caching
+  # - Rate limiting counters
+  # - Leaderboards/sorted results
+  # - Session data
+  # - Temporary computations
+  #
+  redis:
+    image: redis:7-alpine
+    container_name: repo_intelligence_redis
+
+    # Command: enable RDB persistence (backup every N seconds)
+    # save 900 1    -> save every 900s if 1 key changed
+    # save 300 10   -> save every 300s if 10 keys changed
+    # save 60 10000 -> save every 60s if 10000 keys changed
+    command: redis-server --appendonly yes --save 900 1 --save 300 10 --save 60 10000
+
+    volumes:
+      # Named volume for Redis data (RDB snapshots and AOF)
+      - repo_intelligence_redis:/data
+
+    # Only expose on localhost
+    ports:
+      - "127.0.0.1:6379:6379"
+
+    # Health check: verify Redis is responding
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+    # Restart policy
+    restart: unless-stopped
+
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+
+  # pgAdmin - Web-based PostgreSQL management tool
+  #
+  # Why pgAdmin?
+  # - Visual database browser (explore schema)
+  # - SQL query editor
+  # - Backup/restore functionality
+  # - User management
+  # - Performance monitoring
+  #
+  # Use for:
+  # - During development to inspect data
+  # - Writing and testing queries
+  # - Understanding schema
+  # - Database administration tasks
+  #
+  # Access: http://localhost:5050
+  # Default credentials: admin@admin.com / admin
+  #
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: repo_intelligence_pgadmin
+
+    environment:
+      # Default user credentials
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+
+      # Run in server mode (not desktop mode)
+      SCRIPT_NAME: /pgadmin
+
+      # Use local storage for configuration
+      PGADMIN_CONFIG_ENHANCED_COOKIE_PROTECTION: 'False'
+      PGADMIN_CONFIG_COOKIE_DEFAULT_SECURE: 'False'
+      PGADMIN_CONFIG_COOKIE_DEFAULT_SAMESITE: 'Lax'
+
+    volumes:
+      # Named volume for pgAdmin configuration
+      - repo_intelligence_pgadmin:/var/lib/pgadmin
+
+      # Pre-configured connection to PostgreSQL
+      - ./scripts/pgadmin-servers.json:/pgadmin4/servers.json
+
+    # Only expose on localhost
+    ports:
+      - "127.0.0.1:5050:80"
+
+    # Health check: verify HTTP server is running
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:80/pgadmin/misc/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+    # Restart policy
+    restart: unless-stopped
+
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+
+    # Depends on PostgreSQL (wait for health check)
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+# Volumes - Persistent storage for services
+#
+# Why named volumes instead of bind mounts?
+# - Data survives container deletion
+# - Docker manages storage location
+# - Better performance than bind mounts
+# - Works consistently across Windows/Mac/Linux
+# - Easier to backup
+#
+# Delete with: docker volume rm repo_intelligence_data
+# View location: docker volume inspect repo_intelligence_data
+#
+volumes:
+  # PostgreSQL data
+  repo_intelligence_data:
+    driver: local
+
+  # Redis data
+  repo_intelligence_redis:
+    driver: local
+
+  # pgAdmin configuration
+  repo_intelligence_pgadmin:
+    driver: local
+
+# Network - Isolated network for services
+#
+# Why custom network?
+# - Services isolated from host network
+# - No port conflicts with other Docker projects
+# - Service names resolve automatically (postgres:5432)
+# - Clear separation of concerns
+#
+networks:
+  default:
+    name: repo_intelligence_network
+    driver: bridge
