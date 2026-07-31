@@ -1,6 +1,7 @@
 # Query-Driven Schema Design
 
 **Checkpoint:** 0.2 (Phase 2 — Query-Driven Design, Phase 3 — Logical Schema Design)
+**Status:** Frozen — updated to incorporate `DATABASE_ARCHITECT_REVIEW.md` findings. See `DATABASE_DESIGN_CHANGELOG.md` for the consolidated change list.
 **Prerequisite:** `DATABASE_DESIGN.md` (conceptual model), `ENTITY_RELATIONSHIP_MODEL.md` (relationships)
 
 ---
@@ -265,6 +266,8 @@ Two PK strategies are used, deliberately, by table role:
 
 **Why it exists:** Core identity and slowly-changing metadata (§2.1).
 
+**Revised per `DATABASE_ARCHITECT_REVIEW.md`:** `default_branch`, `homepage_url`, `is_template`, and `size_kb` are **removed** (Findings 1, 2 — none justified by any of the 83 queries; `size_kb` now lives solely on `repository_snapshot`, §14.10). `first_seen_at` is **removed** (Finding 12 — pure duplicate of `created_at`). Two columns are **added**: `is_accessible` and `inaccessible_since` (Finding 4 — closes the repository-lifecycle gap between `DATABASE_DESIGN.md`'s narrative promise and the previous schema, which had no column to record a repository confirmed gone from GitHub).
+
 | Column | Type | Constraint |
 |---|---|---|
 | id | uuid | PK, default `uuid_generate_v4()` |
@@ -274,18 +277,15 @@ Two PK strategies are used, deliberately, by table role:
 | full_name | text | UNIQUE NOT NULL |
 | description | text | |
 | primary_language | text | |
-| default_branch | text | |
 | license_id | uuid | FK → licenses.id, NULL, `ON DELETE SET NULL` |
-| homepage_url | text | |
-| is_archived | boolean | NOT NULL, default false |
+| is_archived | boolean | NOT NULL, default false — maintainer-side state (repo still exists, still fetchable) |
 | is_fork | boolean | NOT NULL, default false |
-| is_template | boolean | NOT NULL, default false |
-| size_kb | integer | |
+| is_accessible | boolean | NOT NULL, default true — *added per Architect Review Finding 4*; set false on a confirmed 404/403 from GitHub, distinct from `is_archived` |
+| inaccessible_since | timestamptz | NULL — *added per Architect Review Finding 4*; set when `is_accessible` transitions to false, cleared if the repository becomes reachable again |
 | github_created_at | timestamptz | NOT NULL |
 | pushed_at | timestamptz | |
-| first_seen_at | timestamptz | NOT NULL, default now() |
-| fetched_at | timestamptz | NOT NULL, default now() — *added per Phase 2 Query 69* |
-| last_extraction_status | enum('pending','success','failed') | NOT NULL, default 'pending' — *added per Phase 2 Query 70* |
+| fetched_at | timestamptz | NOT NULL, default now() — *added per Phase 2 Query 69*; also doubles as "when discovered" via its first write, making a separate `first_seen_at` unnecessary |
+| last_extraction_status | enum('pending','success','failed') | NOT NULL, default 'pending' — *added per Phase 2 Query 70*; tracks pipeline-side extraction outcome, distinct from `is_accessible`'s GitHub-side existence state |
 | created_at | timestamptz | NOT NULL, default now() |
 | updated_at | timestamptz | NOT NULL, default now() |
 
@@ -296,10 +296,11 @@ Two PK strategies are used, deliberately, by table role:
 - `INDEX (primary_language)` — Category A query 1
 - `INDEX (license_id)` — Category A query 6
 - `INDEX (is_archived, is_fork) WHERE is_archived = false AND is_fork = false` (partial index) — serves the extremely common "active, original work" default filter (Category A query 10) cheaply
+- `INDEX (is_accessible) WHERE is_accessible = false` (partial index) — *added per Architect Review Finding 4*; supports both the acquisition pipeline's own bookkeeping and excluding inaccessible repositories from search/analytics by default, cheaply, without scanning the whole table
 - `INDEX (fetched_at)` — staleness queries (Category I query 69)
 - Full-text search index (`GIN` over `to_tsvector('english', name || ' ' || description)`) — Category A query 5, and the keyword half of hybrid search (Milestone 4.1)
 
-**Expected volume:** 100 (Milestone 1) → 1,000 (V1 target, `SYSTEM_ARCHITECTURE.md` §8) → 10K → 100K → millions (5-year, per §9's scaling roadmap). This is the table every other table hangs off of; its row width is deliberately kept narrow (identity + metadata only, no computed features) precisely because it will be touched by every query.
+**Expected volume:** 100 (Milestone 1) → 1,000 (V1 target, `SYSTEM_ARCHITECTURE.md` §8) → 10K → 100K → millions (5-year, per §9's scaling roadmap). This is the table every other table hangs off of; its row width is deliberately kept narrow (identity + metadata only, no computed features) precisely because it will be touched by every query. Removing the four unjustified columns (Findings 1, 2, 12) keeps this discipline intact rather than letting the table drift back toward a GitHub mirror.
 
 **5-year growth consideration:** At 100K-1M rows, this table remains entirely reasonable for a single PostgreSQL instance (`TECHNICAL_IMPLEMENTATION_IDEAS.md` §2 cites PostgreSQL scaling to billions of rows). No partitioning needed at this table's projected size.
 
@@ -326,6 +327,8 @@ Two PK strategies are used, deliberately, by table role:
 
 **Why it exists:** M:N with edge attributes (§2.6, §3.4).
 
+**Revised per `DATABASE_ARCHITECT_REVIEW.md` Finding 6:** added `removed_at` to close the "silently vanished, still counted" gap in adoption/trend queries (Category E, queries 38-40) — without it, a technology adopted then later dropped across many repositories would show inflated, indefinitely-growing adoption counts, since `first_detected_at` alone only records when an association started.
+
 | Column | Type | Constraint |
 |---|---|---|
 | repository_id | uuid | FK → repositories.id, `ON DELETE CASCADE` |
@@ -335,10 +338,11 @@ Two PK strategies are used, deliberately, by table role:
 | confidence | numeric(3,2) | NOT NULL, CHECK (confidence BETWEEN 0 AND 1) |
 | first_detected_at | timestamptz | NOT NULL, default now() — *added per Phase 2 Category D finding; never overwritten on recompute* |
 | last_confirmed_at | timestamptz | NOT NULL, default now() — *updated every recomputation pass* |
+| removed_at | timestamptz | NULL — *added per Architect Review Finding 6*; set (not deleted) when a recomputation pass no longer detects a previously-confirmed association, cleared if re-detected |
 
 **PK:** `(repository_id, technology_id)`.
 
-**Indexes:** PK covers `repository → technologies`; `INDEX (technology_id, role)` supports "find all repos using React as primary" (Category A query 2, Category D query 29).
+**Indexes:** PK covers `repository → technologies`; `INDEX (technology_id, role)` supports "find all repos using React as primary" (Category A query 2, Category D query 29); `INDEX (technology_id) WHERE removed_at IS NULL` (partial) — the default "currently uses this technology" filter that most Category D/E queries actually want, excluding stale associations without a query-time filter on every call site.
 
 **Expected volume:** ~5-15 technologies per repository → 5K-15K rows at 1,000 repos; low millions at 100K repos. Reasonable.
 
@@ -364,6 +368,8 @@ Two PK strategies are used, deliberately, by table role:
 | last_checked_at | timestamptz | NOT NULL, default now() |
 
 **Indexes:** `INDEX (repository_id)`; `INDEX (package_name, ecosystem)` — Category D query 34 ("find repos using package X"); partial `INDEX (repository_id) WHERE vulnerability_count > 0` — Category D query 33.
+
+**Declared partition key (per `DATABASE_ARCHITECT_REVIEW.md` Finding 9):** unlike the time-series tables below, this table's growth is driven by repository count, not observation frequency — it has no natural date column to partition by. The declared future key is **`repository_id` (HASH)**, or alternatively **`ecosystem` (LIST)** if package-ecosystem-scoped queries dominate at scale. This distinguishes it structurally from `repository_metrics`/`repository_snapshot`/`repository_scores` (declared `RANGE` on a timestamp, §14.9-14.11) — a single partitioning strategy does not fit every high-volume table in this schema, and this document records the two different strategies deliberately rather than defaulting all four tables to the same approach.
 
 **Expected volume:** This is the **highest-cardinality table in the schema**. Average 30-100 dependencies per repository (including transitive, per `TECHNICAL_IMPLEMENTATION_IDEAS.md` §5). At 1,000 repos: 30K-100K rows. At 100K repos: 3M-10M rows. **Explicit 5-year flag:** at millions-of-repos scale (§9 Version 4), this table is the first candidate for partitioning (by `repository_id` range or `ecosystem`) or migration to a columnar store — flagged in Phase 5, not solved prematurely here.
 
@@ -416,13 +422,17 @@ Two PK strategies are used, deliberately, by table role:
 
 **On JSONB usage — explicit restraint:** Only two of ~27 columns are JSONB (`loc_by_language`, `extended_features`). Every feature named explicitly in `TECHNICAL_IMPLEMENTATION_IDEAS.md` §5 as a "Stage 1: Essential Feature" gets its own typed column, because these are queried, filtered, and indexed constantly (Category B-F, ~40 of the 83 queries touch this table). JSONB is reserved for (a) genuinely variable-shaped data (per-language LOC breakdown — the key set is unbounded) and (b) a deliberate escape hatch for features that haven't earned a promoted column yet. This directly follows the CLAUDE.md-level project instruction: "Use JSONB only when flexibility is genuinely beneficial... do not overuse JSON."
 
-**Expected volume:** One row per repository per week (batch update cadence, `SYSTEM_ARCHITECTURE.md` §3 Stage 4). At 1,000 repos: ~52K rows/year. At 100K repos over 5 years: ~260M rows. **Explicit 5-year flag:** this is the second partitioning candidate (by `snapshot_date` range, monthly or quarterly partitions) — flagged in Phase 5.
+**Expected volume:** One row per repository per week (batch update cadence, `SYSTEM_ARCHITECTURE.md` §3 Stage 4). At 1,000 repos: ~52K rows/year. At 100K repos over 5 years: ~260M rows. At the review's assumed scale (1M repos): ~52M rows/year, well past the point where partitioning is optional.
+
+**Declared partition key (per `DATABASE_ARCHITECT_REVIEW.md` Finding 9):** **`snapshot_date` (RANGE, monthly or quarterly)**. This is committed now, in the logical schema, so that the Checkpoint 0.2 migration can create this table in a way that supports non-disruptive conversion to a physically partitioned table later — the alternative (retrofitting partitioning onto an already-large, unpartitioned production table) requires either an online-conversion tool or a maintenance window, which this design avoids paying for later by deciding the key now. Physical `PARTITION BY` implementation itself remains deferred to Version 2/3 (`MIGRATION_STRATEGY.md` §Phase 5), consistent with YAGNI — only the key is fixed, not the partitions.
 
 ---
 
 ### 14.10 `repository_snapshot` (raw metadata history)
 
 **Why it exists:** Cheap, high-frequency raw counters, separate from expensive computed metrics (§2.9).
+
+**Revised per `DATABASE_ARCHITECT_REVIEW.md`:** `size_kb` is **removed from `repositories`** and lives here exclusively (Finding 2 — this table is the correct, sole authority for it, since size is exactly the kind of cheap, time-varying counter this table exists to hold). Default cadence is fixed at **weekly**, not daily (Finding 5 — no query in the 83-query workload needs sub-weekly resolution, and a needlessly high cadence directly worsens this table's already-significant partitioning pressure).
 
 | Column | Type | Constraint |
 |---|---|---|
@@ -431,15 +441,17 @@ Two PK strategies are used, deliberately, by table role:
 | snapshot_date | date | NOT NULL |
 | stars_count | integer | NOT NULL |
 | forks_count | integer | NOT NULL |
-| watchers_count | integer | NOT NULL |
+| watchers_count | integer | NOT NULL — retained per Architect Review Finding 3, but documented as a near-duplicate of `stars_count` since GitHub merged "watching" into starring; not to be used as an independent signal in any scoring formula |
 | open_issues_count | integer | NOT NULL |
-| size_kb | integer | |
+| size_kb | integer | — sole authoritative home for this field, per Finding 2 |
 
 **PK:** `id`. **Unique constraint:** `(repository_id, snapshot_date)`.
 
 **Indexes:** `UNIQUE (repository_id, snapshot_date)`; `INDEX (repository_id, snapshot_date)` for range scans (Category E/H trend queries — star velocity, growth curves).
 
-**Expected volume:** Potentially higher frequency than `repository_metrics` (can be captured on every API touch, not just weekly feature-engineering runs) — the largest table by row count at scale. At 1,000 repos, daily snapshots: ~365K rows/year. **Explicit 5-year flag:** primary partitioning candidate, same as 14.9, by `snapshot_date`.
+**Expected volume:** At weekly cadence (revised default): 1,000 repos → ~52K rows/year (previously estimated at ~365K/year under the incorrectly-assumed daily cadence — the cadence fix alone is a 7x reduction in this table's growth rate with no loss of query capability). At the review's assumed scale (1M repos, 100M snapshot rows): reached within roughly 2 years at weekly cadence.
+
+**Declared partition key (per `DATABASE_ARCHITECT_REVIEW.md` Finding 9):** **`snapshot_date` (RANGE)**, same rationale and same deferred-implementation posture as `repository_metrics` above. This table and `repository_metrics` are the two most exposed by the review's stated scale assumption and should be partitioned together, on the same cadence, as one coordinated Version 2/3 initiative (`MIGRATION_STRATEGY.md` §Phase 5) — not addressed independently.
 
 ---
 
@@ -461,7 +473,9 @@ Two PK strategies are used, deliberately, by table role:
 
 **On JSONB usage:** `score_breakdown` is JSONB because difficulty's breakdown (`{loc_weight, complexity_weight, docs_weight}`) and quality's breakdown (`{test_coverage_weight, maintenance_weight, ...}`) are structurally different per `score_type` — a textbook justified case, not overuse.
 
-**Expected volume:** 3 score types × weekly cadence × repository count. At 1,000 repos: ~156K rows/year. Same partitioning candidacy as 14.9/14.10 at scale.
+**Expected volume:** 3 score types × weekly cadence × repository count. At 1,000 repos: ~156K rows/year.
+
+**Declared partition key (per `DATABASE_ARCHITECT_REVIEW.md` Finding 9):** **`computed_at` (RANGE)**, same posture as 14.9/14.10 — declared now, physically implemented later, as part of the same coordinated partitioning initiative.
 
 ---
 
@@ -469,20 +483,24 @@ Two PK strategies are used, deliberately, by table role:
 
 **Why it exists:** Model-scoped semantic vectors (§2.11).
 
+**Revised per `DATABASE_ARCHITECT_REVIEW.md` Finding 7:** the vector width was previously `vector(1536)` (OpenAI's `text-embedding-ada-002` dimensionality) while the project's chosen tooling (`TECHNICAL_IMPLEMENTATION_IDEAS.md` §5-6) is Hugging Face Sentence Transformers, which does not produce 1536-dimensional output — a genuine defect that would have broken on first use. **Resolved by committing explicitly to one V1 model and dimensionality**, rather than leaving the column generically sized for a model the project doesn't actually plan to use.
+
 | Column | Type | Constraint |
 |---|---|---|
 | repository_id | uuid | FK → repositories.id, `ON DELETE CASCADE` |
 | model_name | text | |
 | model_version | text | NOT NULL |
-| embedding | vector(1536) | NOT NULL — using `pgvector`, already installed in Checkpoint 0.1 |
+| embedding | vector(768) | NOT NULL — using `pgvector` (installed in Checkpoint 0.1); 768 dimensions matches a standard Sentence Transformers model (e.g., `all-mpnet-base-v2`), the V1 embedding source named in `TECHNICAL_IMPLEMENTATION_IDEAS.md` §5 |
 | source_text_hash | text | NOT NULL |
 | computed_at | timestamptz | NOT NULL, default now() |
 
 **PK:** `(repository_id, model_name)`.
 
+**Single-dimension constraint, stated explicitly:** all V1 models sharing this table must produce 768-dimensional output. This is a deliberate, documented V1 scope boundary, not an oversight — the composite key still correctly anticipates multiple models coexisting (e.g., comparing two different 768-dim Sentence Transformer checkpoints), but a model of a *different* dimensionality (e.g., a future switch to a 1536-dim OpenAI-family model) requires a new table or a column-width migration. This is the correct YAGNI call: solving for arbitrary-dimension multi-model support now, before a second model is ever adopted, would be speculative complexity with no current consumer.
+
 **Indexes:** An HNSW or IVFFlat index (`pgvector`) on `embedding` for approximate nearest-neighbor search — the specific index type and parameters are a Milestone 4.2 implementation decision (not fixed at schema-design time, since it depends on eventual corpus size per `TECHNICAL_IMPLEMENTATION_IDEAS.md` §2's pgvector trade-off discussion — appropriate for 1-10M vectors, exactly V1's scale-out ceiling).
 
-**Expected volume:** One row per repository per active model. At 1,000 repos, 1 model: 1,000 rows. Grows linearly with repository count; grows step-wise when a new model is adopted (old model's rows are not deleted — enables comparing search quality across model versions).
+**Expected volume:** One row per repository per active model. At 1,000 repos, 1 model: 1,000 rows. Grows linearly with repository count; grows step-wise when a new (same-dimension) model is adopted (old model's rows are not deleted — enables comparing search quality across model versions).
 
 ---
 
@@ -516,10 +534,12 @@ Two PK strategies are used, deliberately, by table role:
 | "Latest metrics for repo" | `repository_metrics (repository_id, snapshot_date DESC)` |
 | "Latest score of type X for repo" | `repository_scores (repository_id, score_type, computed_at DESC)` |
 | "Active, original repos" (default filter) | `repositories (is_archived, is_fork)` partial |
+| "Accessible repos only" (default filter) | `repositories (is_accessible) WHERE is_accessible = false` partial — *added per Architect Review Finding 4* |
+| "Currently-used technologies only" (default filter) | `repository_technologies (technology_id) WHERE removed_at IS NULL` partial — *added per Architect Review Finding 6* |
 | "Repos using tech X" | `repository_technologies (technology_id, role)` |
 | "Repos with vulnerable deps" | `repository_dependencies (repository_id) WHERE vulnerability_count > 0` partial |
 | Keyword search | `repositories` GIN full-text index |
-| Semantic search | `repository_embeddings` pgvector ANN index |
+| Semantic search | `repository_embeddings` pgvector ANN index (768-dim) |
 | Star/growth trend | `repository_snapshot (repository_id, snapshot_date)` |
 | Similarity lookup | `repository_similarity (repository_id, similarity_method, rank)` |
 
@@ -527,10 +547,29 @@ Every index above is derived from a named query in Phase 2, not speculative — 
 
 ---
 
-## 16. Summary
+## 16. Partitioning Strategy (Declared, Not Implemented)
+
+Per `DATABASE_ARCHITECT_REVIEW.md` Finding 9, this section consolidates the partition-key decisions made across §14.8-14.11 into one place, so the commitment is visible without hunting through individual table sections.
+
+| Table | Declared partition key | Type | Rationale |
+|---|---|---|---|
+| `repository_metrics` | `snapshot_date` | RANGE (monthly/quarterly) | Time-series, grows with observation count × repository count |
+| `repository_snapshot` | `snapshot_date` | RANGE (monthly/quarterly) | Same as above; coordinate with `repository_metrics` |
+| `repository_scores` | `computed_at` | RANGE (monthly/quarterly) | Time-series, grows with score-type count × observation count |
+| `repository_dependencies` | `repository_id` (or `ecosystem`) | HASH (or LIST) | Growth driven by repository count, not time — no natural date column |
+
+**What is committed now:** the partition key for each table, so the Checkpoint 0.2 Alembic migrations create these tables in a shape that does not preclude non-disruptive conversion later.
+
+**What is explicitly deferred (YAGNI):** the actual `CREATE TABLE ... PARTITION BY` DDL, partition-maintenance tooling (e.g., `pg_partman` for automated range-partition creation/retention), and the specific partition boundary sizes (monthly vs. quarterly — a decision better made with real write-volume data than speculated now). None of the four tables are within an order of magnitude of needing physical partitioning at V1's actual near-term scale (hundreds to low thousands of repositories); implementing it now would be solving a Version 3 problem during a Version 1 checkpoint. The key is fixed; the partitions are not built.
+
+**Trigger condition for revisiting:** when any of these four tables approaches roughly 10-50M rows in practice (not the 5-year projection, the actual measured row count), partition creation should be scheduled as one coordinated migration across all four tables together (`MIGRATION_STRATEGY.md` §Phase 5), not four separate efforts.
+
+---
+
+## 17. Summary
 
 12 core tables (matching the 12 core entities in `DATABASE_DESIGN.md`), 3 justified JSONB columns out of ~90 total columns, 2 explicit primary-key strategies chosen by table role, and every index traced to a specific query from the 83-query workload in Phase 2.
 
-Two tables (`repository_metrics`, `repository_snapshot`) and one (`repository_scores`) are flagged for future partitioning by date range — not implemented now, since V1's projected volume (tens of thousands of rows/year) does not warrant the operational complexity, but the column choices (BIGINT identity, not UUID) were made specifically to keep that door open.
+This revision incorporates `DATABASE_ARCHITECT_REVIEW.md` Findings 1, 2, 4, 5, 6, 7, 9, and 12: four unjustified GitHub-mirror/duplicate columns removed from `repositories`; repository-lifecycle tracking (`is_accessible`, `inaccessible_since`) added; technology-association removal tracking (`removed_at`) added; snapshot cadence corrected to weekly; the embedding vector's dimensionality fixed at 768 with an explicit single-model V1 assumption; and partition keys declared (not implemented) for the four highest-volume tables. No table, entity, or relationship was added or removed — every change is additive or corrective at the column level, consistent with the Architect Review's own verdict that the entity model required no structural rework.
 
 Proceed to `MIGRATION_STRATEGY.md` for how these 12 tables are sequenced into Alembic migrations.
