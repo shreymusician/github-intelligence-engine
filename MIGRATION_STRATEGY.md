@@ -1,6 +1,7 @@
 # Migration Strategy
 
 **Checkpoint:** 0.2 (Phase 4 — Migration Planning, Phase 5 — Review)
+**Status:** Frozen — updated to incorporate `DATABASE_ARCHITECT_REVIEW.md` findings (see §14, a Phase 5 addendum, and `DATABASE_DESIGN_CHANGELOG.md` for the consolidated change list).
 **Prerequisite:** `QUERY_DRIVEN_SCHEMA_DESIGN.md` (logical schema)
 **Note:** This document plans migration structure and ordering only. **No SQL or Alembic migration files are created here** — that is Checkpoint 0.2's implementation phase, which follows review and approval of this design.
 
@@ -37,7 +38,7 @@ Every migration is additive-only (`ADR-003`'s "no ad-hoc schema changes... every
 
 **Creates:** `owners`, `repositories`
 
-**Rationale:** The central entity and its required parent. Kept as its own migration — not merged with `001` — because `repositories` is the highest-traffic table in the schema and its own evolution (column additions like `fetched_at`, `last_extraction_status` discovered in Phase 2) will likely be revisited independently of the static reference tables in `001`.
+**Rationale:** The central entity and its required parent. Kept as its own migration — not merged with `001` — because `repositories` is the highest-traffic table in the schema and its own evolution (column additions like `fetched_at`, `last_extraction_status` discovered in Phase 2; `is_accessible`, `inaccessible_since` added per `DATABASE_ARCHITECT_REVIEW.md` Finding 4) will likely be revisited independently of the static reference tables in `001`. **Revised column set:** `default_branch`, `homepage_url`, `is_template`, `size_kb`, and `first_seen_at` are no longer part of this migration's `repositories` definition (Findings 1, 2, 12 — removed as unjustified GitHub-mirror/duplicate columns); `is_accessible` and `inaccessible_since` are added (Finding 4).
 
 **Foreign keys introduced:** `repositories.owner_id → owners.id`, `repositories.license_id → licenses.id` (requires `001` to have run first).
 
@@ -51,7 +52,7 @@ Every migration is additive-only (`ADR-003`'s "no ad-hoc schema changes... every
 
 **Creates:** `repository_topics`, `repository_technologies`
 
-**Rationale:** Both are M:N join tables connecting `repositories` to `001`'s reference tables. Grouped together because they share the same shape (associative tables between a core entity and a taxonomy table) and the same owning concern — "what is this repository tagged/built with" — even though `repository_topics` is populated by Acquisition and `repository_technologies` by Feature Engineering. Splitting them into two migrations would add process overhead without a corresponding independence benefit, since both depend on the exact same prerequisite state (`002` + `001`).
+**Rationale:** Both are M:N join tables connecting `repositories` to `001`'s reference tables. Grouped together because they share the same shape (associative tables between a core entity and a taxonomy table) and the same owning concern — "what is this repository tagged/built with" — even though `repository_topics` is populated by Acquisition and `repository_technologies` by Feature Engineering. Splitting them into two migrations would add process overhead without a corresponding independence benefit, since both depend on the exact same prerequisite state (`002` + `001`). **Revised:** `repository_technologies` now includes a `removed_at` column (`DATABASE_ARCHITECT_REVIEW.md` Finding 6), closing a trend-analytics correctness gap — this is a column addition to the migration's existing table definition, not a new table, and does not change this migration's dependencies or grouping rationale.
 
 **Dependencies:** `001_reference_tables`, `002_core_entities`.
 
@@ -61,7 +62,7 @@ Every migration is additive-only (`ADR-003`'s "no ad-hoc schema changes... every
 
 **Creates:** `repository_dependencies`
 
-**Rationale:** Kept separate from `003` despite superficial similarity (also a repository-scoped association) because it is **not** a join to a curated reference table — it's a high-cardinality, independently-owned table (§14.8 flags it as the highest-volume table in the schema and a future partitioning candidate). Isolating it means a future migration that partitions or restructures this table doesn't need to touch the taxonomy association tables in `003`.
+**Rationale:** Kept separate from `003` despite superficial similarity (also a repository-scoped association) because it is **not** a join to a curated reference table — it's a high-cardinality, independently-owned table (§14.8 flags it as the highest-volume table in the schema and a future partitioning candidate). Isolating it means a future migration that partitions or restructures this table doesn't need to touch the taxonomy association tables in `003`. **Declared partition key (`DATABASE_ARCHITECT_REVIEW.md` Finding 9):** `repository_id` (HASH) or `ecosystem` (LIST) — not a date range, since this table's growth is driven by repository count rather than observation frequency. Declared now per `QUERY_DRIVEN_SCHEMA_DESIGN.md` §16; physical partitioning remains deferred.
 
 **Owning module:** Feature Engineering (Milestone 2.5, dependency analysis).
 
@@ -73,7 +74,7 @@ Every migration is additive-only (`ADR-003`'s "no ad-hoc schema changes... every
 
 **Creates:** `repository_snapshot`
 
-**Rationale:** Own migration because it is owned by a different module (Data Acquisition, not Feature Engineering) and has a different write cadence than the metrics/scores tables that follow. Per `DATABASE_DESIGN.md` §2.9, deliberately kept independent of `repository_metrics` to avoid coupling cheap/frequent raw-counter capture to expensive/infrequent feature computation.
+**Rationale:** Own migration because it is owned by a different module (Data Acquisition, not Feature Engineering) and has a different write cadence than the metrics/scores tables that follow. Per `DATABASE_DESIGN.md` §2.9, deliberately kept independent of `repository_metrics` to avoid coupling cheap/frequent raw-counter capture to expensive/infrequent feature computation. **Revised cadence assumption (Finding 5):** default observation cadence is weekly, not daily as originally speculated — reduces this table's growth rate with no loss of supported query capability. `size_kb` is now this table's sole authoritative home (Finding 2), removed from `repositories`. **Declared partition key (Finding 9):** `snapshot_date` (RANGE, monthly/quarterly), coordinated with `006_feature_store` below.
 
 **Owning module:** Data Acquisition.
 
@@ -85,7 +86,7 @@ Every migration is additive-only (`ADR-003`'s "no ad-hoc schema changes... every
 
 **Creates:** `repository_metrics`
 
-**Rationale:** This is the single largest table definition (27 columns, §14.9) and the one most likely to accumulate new columns as Milestone 2's checkpoints (2.1 Activity, 2.2 Technology, 2.3 Documentation, 2.4 Code Complexity, 2.5 Dependency) each contribute their own feature groups over time. Isolating it as its own migration means future column-addition migrations (e.g., `009_add_security_features`) have a clean, singular target.
+**Rationale:** This is the single largest table definition (27 columns, §14.9) and the one most likely to accumulate new columns as Milestone 2's checkpoints (2.1 Activity, 2.2 Technology, 2.3 Documentation, 2.4 Code Complexity, 2.5 Dependency) each contribute their own feature groups over time. Isolating it as its own migration means future column-addition migrations (e.g., a later `add_security_features` migration) have a clean, singular target. **Declared partition key (`DATABASE_ARCHITECT_REVIEW.md` Finding 9):** `snapshot_date` (RANGE, monthly/quarterly) — this table and `005_repository_snapshot_history` are the two most exposed by the review's stated scale assumption (100M snapshot rows) and should be partitioned together as one coordinated future initiative, not independently.
 
 **Owning module:** Feature Engineering (Milestone 2, all checkpoints).
 
@@ -97,7 +98,7 @@ Every migration is additive-only (`ADR-003`'s "no ad-hoc schema changes... every
 
 **Creates:** `repository_scores`
 
-**Rationale:** Distinct owning module (Intelligence Generation, Milestone 3) and a distinct consumer pattern (read by Search and Recommendations, not by Feature Engineering). Depends on `006` only in the sense that scoring algorithms *use* metrics as input at the application layer — there is no database-level foreign key from `repository_scores` to `repository_metrics` (scores reference `repositories` directly), so this migration's only hard dependency is `002`.
+**Rationale:** Distinct owning module (Intelligence Generation, Milestone 3) and a distinct consumer pattern (read by Search and Recommendations, not by Feature Engineering). Depends on `006` only in the sense that scoring algorithms *use* metrics as input at the application layer — there is no database-level foreign key from `repository_scores` to `repository_metrics` (scores reference `repositories` directly), so this migration's only hard dependency is `002`. **Declared partition key (`DATABASE_ARCHITECT_REVIEW.md` Finding 9):** `computed_at` (RANGE, monthly/quarterly), same coordinated-partitioning posture as `005`/`006`.
 
 **Owning module:** Intelligence Generation (Milestone 3.1, 3.2, 3.5).
 
@@ -109,7 +110,7 @@ Every migration is additive-only (`ADR-003`'s "no ad-hoc schema changes... every
 
 **Creates:** `repository_embeddings`
 
-**Rationale:** Requires the `vector` extension, already installed during Checkpoint 0.1's infrastructure setup (`init-postgres.sql`) — this migration only creates the table and column using that pre-existing extension, it does not install the extension itself (infrastructure vs. schema separation, per `ADR-003`, holds even within Checkpoint 0.2's own migrations). Isolated because it's the first table with a genuinely different storage/index type (pgvector ANN index) — keeping it separate means an eventual embedding-model migration or index-tuning migration has an isolated blast radius.
+**Rationale:** Requires the `vector` extension, already installed during Checkpoint 0.1's infrastructure setup (`init-postgres.sql`) — this migration only creates the table and column using that pre-existing extension, it does not install the extension itself (infrastructure vs. schema separation, per `ADR-003`, holds even within Checkpoint 0.2's own migrations). Isolated because it's the first table with a genuinely different storage/index type (pgvector ANN index) — keeping it separate means an eventual embedding-model migration or index-tuning migration has an isolated blast radius. **Revised (`DATABASE_ARCHITECT_REVIEW.md` Finding 7):** the embedding column is typed `vector(768)`, not `vector(1536)` as originally planned — the original width matched OpenAI's embedding dimensionality while the project's chosen V1 tooling (Hugging Face Sentence Transformers) does not produce 1536-dimensional output. This migration now commits explicitly to one V1 model dimensionality (768, matching a standard Sentence Transformers model), documented as a deliberate single-model scope boundary in `QUERY_DRIVEN_SCHEMA_DESIGN.md` §14.12.
 
 **Owning module:** Feature Engineering (Milestone 3.4).
 
@@ -225,13 +226,40 @@ Per the instruction, this is a planning document — none of the migrations abov
 - Append-only time-series tables (`repository_metrics`, `repository_snapshot`, `repository_scores`) give the platform genuine historical trend capability from day one — not bolted on later.
 - **Accepted gap (restated from Phase 2 Category H, Query 68):** point-in-time reconstruction of a repository's *full* technology set as of an arbitrary past date is not supported — `repository_technologies` is current-state-with-first-seen-date, not a full history. This was a deliberate cost/benefit call: full technology-association history would roughly double the write volume of the highest-join-frequency association table for a query need that appears once in 83 evaluated queries and is not required by any roadmap checkpoint through Milestone 5. If a future roadmap checkpoint requires it, the fix is additive (introduce `technology_association_history` as a new table populated going forward) — not a breaking schema change.
 
-## 13. Overall Verdict
+## 13. Phase 5 Addendum — Resolution of `DATABASE_ARCHITECT_REVIEW.md` Findings
+
+This original Phase 5 self-review (§5-§12 above) was itself subjected to an independent adversarial review, producing `DATABASE_ARCHITECT_REVIEW.md` — 13 findings across the same five architectural lenses. That review's three High-severity findings and the Medium/Low findings judged to improve correctness without adding unjustified complexity have now been incorporated into the design (`DATABASE_DESIGN.md`, `ENTITY_RELATIONSHIP_MODEL.md`, `QUERY_DRIVEN_SCHEMA_DESIGN.md`, and the migration definitions above). Status of each:
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| 1. Unjustified GitHub-mirror columns (`default_branch`, `homepage_url`, `is_template`) | Low | **Resolved** — removed from `repositories` (migration `002`) |
+| 2. `size_kb` duplicated across two tables | Low | **Resolved** — sole home is now `repository_snapshot` (migration `005`) |
+| 3. `watchers_count` is a near-duplicate signal | Info | **Documented, not removed** — retained, flagged as non-independent |
+| 4. No repository-lifecycle "gone from GitHub" state | **High** | **Resolved** — `is_accessible`, `inaccessible_since` added (migration `002`) |
+| 5. Snapshot cadence assumed daily without justification | Medium | **Resolved** — defaulted to weekly (migration `005`) |
+| 6. No removal timestamp on technology associations | Medium | **Resolved** — `removed_at` added (migration `003`) |
+| 7. Embedding vector dimension contradicts recommended model | **High** | **Resolved** — fixed at `vector(768)`, single-model V1 assumption documented (migration `008`) |
+| 8. Normalized ML feature-vector storage undecided | Low | **Deferred, documented** — no schema change; left to Checkpoint 2.6's implementer |
+| 9. Partitioning key not committed given stated scale | **High** | **Resolved** — partition keys declared for all four high-volume tables (migrations `004`-`007`; consolidated in `QUERY_DRIVEN_SCHEMA_DESIGN.md` §16); physical partitioning remains correctly deferred |
+| 10. CASCADE delete blast radius at scale | Medium | **Documented as operational guidance** — no constraint change; hard-deletes of `repositories` are administrative-only, not routine pipeline behavior |
+| 11. Columnar-migration should be a committed milestone | Medium | **Documented as implementation guidance** — data-access layer should sit behind a repository/DAO abstraction from the start; not a schema change |
+| 12. `first_seen_at` / `created_at` redundant | Low | **Resolved** — `first_seen_at` removed (migration `002`) |
+| 13. (Restates Finding 1) | Low | **Resolved**, see Finding 1 |
+
+**Every High-severity finding is resolved.** Every Medium finding is either resolved (5, 6, 9) or deliberately handled as documentation/operational guidance rather than a schema change (10, 11), consistent with the instruction to avoid adding complexity without clear V1 value. No new table, entity, or relationship was introduced by any of these resolutions — confirming, for a second time (after the original Phase 2 refinements), that the entity boundaries fixed in `DATABASE_DESIGN.md` Phase 1 were structurally correct from the start.
+
+## 14. Overall Verdict
 
 The schema is **approved to proceed to implementation** with the following carried-forward action items, none of which block Checkpoint 0.2:
 
-1. When corpus approaches ~100K repositories (Version 3 per `SYSTEM_ARCHITECTURE.md` §9), execute a coordinated partitioning migration across `repository_dependencies`, `repository_metrics`, `repository_snapshot`, `repository_scores` (§6).
+1. When any of `repository_dependencies`, `repository_metrics`, `repository_snapshot`, `repository_scores` approaches roughly 10-50M rows in practice, execute a coordinated partitioning migration across all four using their now-declared partition keys (§6, §13 Finding 9).
 2. Autovacuum/fillfactor tuning for high-write time-series tables is an operations task, not a schema task (§7).
-3. Point-in-time technology history is a known, accepted, and documented V1 gap (§12) — not to be "discovered" as a surprise later.
+3. Point-in-time technology history remains a known, accepted, and documented V1 gap (§12) — now partially narrowed by `removed_at` (Finding 6), which prevents the worst failure mode (indefinite phantom-adoption inflation) without requiring full history.
 4. `repository_metrics.loc_by_language` is a normalization candidate *if and only if* a future query needs to filter/join on individual language breakdown (§5) — do not split it preemptively.
+5. Normalized/scaled ML feature-vector storage location (§13 Finding 8) is an open implementation decision for Checkpoint 2.6, not resolved here by design.
+6. Hard-deletion of `repositories` rows is administrative-only; routine pipeline logic must use `is_accessible`/`inaccessible_since` instead (§13 Finding 10).
+7. The data-access layer for high-volume tables should be built behind a repository/DAO abstraction from Checkpoint 0.2 implementation onward, anticipating an eventual ClickHouse migration for analytics-scale time-series data (§13 Finding 11).
 
-No entity, relationship, or table in this design was found to require restructuring during this review. The three refinements made during Phase 2 (§12 of `QUERY_DRIVEN_SCHEMA_DESIGN.md`) were sufficient — a sign the conceptual model in `DATABASE_DESIGN.md` was sound before logical design began.
+No entity, relationship, or table in this design was found to require restructuring across either round of review. All corrections — from Phase 2's original three refinements through the Architect Review's thirteen findings — were attribute-level, confirming the conceptual model in `DATABASE_DESIGN.md` was sound before logical design began and remained sound under two independent adversarial passes.
+
+**This design is now frozen.** See `DATABASE_DESIGN_CHANGELOG.md` for the complete, consolidated record of every change made in this revision, and its final consistency validation across all four design documents.
