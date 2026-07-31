@@ -33,15 +33,31 @@ CREATE USER repo_user WITH PASSWORD 'repo_password';
 -- ============================================================================
 -- CREATE APPLICATION DATABASE
 -- ============================================================================
--- UTF-8 encoding is required for:
--- - Full-text search (FTS)
--- - International character support
--- - Proper string comparisons
+-- Portability note: LC_COLLATE/LC_CTYPE are deliberately NOT specified here.
+--
+-- CREATE DATABASE requires its collation to match the template database's
+-- collation EXACTLY (byte-for-byte), not just "equivalently". The base image
+-- is postgres:17-alpine (musl libc), whose initdb reports the container
+-- locale as "en_US.utf8" (lowercase, no hyphen) — not the glibc-style
+-- "en_US.UTF-8" (uppercase, hyphenated) this script previously hardcoded.
+-- That string mismatch, not a real locale incompatibility, is what
+-- PostgreSQL's "new collation is incompatible with the collation of the
+-- template database" error reports.
+--
+-- Hardcoding the "correct" Alpine string would just trade one fragile
+-- assumption for another (and would break again on a glibc-based image).
+-- Omitting LC_COLLATE/LC_CTYPE lets CREATE DATABASE inherit them from
+-- template1, which was already initialized correctly for whatever image
+-- this runs on — the portable default, per project instruction.
+--
+-- ENCODING 'UTF8' is kept explicit: unlike collation, encoding has no
+-- exact-string-match requirement against the template (only a compatibility
+-- check), postgres:17-alpine's template1 is UTF8 by default, and asserting
+-- it here documents the requirement (FTS, international text) without
+-- reintroducing a portability risk.
 
 CREATE DATABASE ai_analytics
     ENCODING 'UTF8'
-    LC_COLLATE 'en_US.UTF-8'
-    LC_CTYPE 'en_US.UTF-8'
     OWNER repo_user;
 
 -- Switch to application database for further configuration
