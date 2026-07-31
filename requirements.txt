@@ -1,16 +1,63 @@
-# Core dependencies for Checkpoint 0.1 (Development Environment Setup)
-# Additional dependencies (feature engineering, ML, API framework, etc.)
-# are added in later checkpoints as those modules are implemented —
-# keeping this minimal now avoids installing unused packages.
+# Repository Intelligence Engine - Python Dependencies
+#
+# Checkpoint 0.1 (Development Environment Setup)
+# Additional dependencies (feature engineering, ML, API, etc.) added in later checkpoints
+#
+# See docs/DEPENDENCIES.md for detailed explanations
+
+# ============================================================================
+# CORE INFRASTRUCTURE (Checkpoint 0.1)
+# ============================================================================
 
 # Database connectivity
-psycopg[binary]==3.2.13
-redis==5.2.0
+psycopg[binary]==3.2.13              # PostgreSQL adapter
 
-# Configuration
-python-dotenv==1.0.1
-PyYAML==6.0.2
+# Caching and sessions
+redis==5.2.0                         # Redis client
 
-# Testing
-pytest==8.3.3
-pytest-cov==5.0.0
+# Configuration management
+python-dotenv==1.0.1                 # Load .env files
+PyYAML==6.0.2                        # YAML parsing
+
+# ============================================================================
+# DATABASE SCHEMA MANAGEMENT (Checkpoint 0.2+)
+# ============================================================================
+# SQLAlchemy: ORM and query builder for database access
+# Alembic: Database migration tool (manages schema evolution)
+#
+# These enable proper schema versioning:
+# 1. Checkpoint 0.1 creates empty database (infrastructure only)
+# 2. Checkpoint 0.2 designs schema via Alembic migrations
+# 3. Schema evolves via migrations (rolling forward/backward)
+#
+# Why separate from init-postgres.sql?
+# - init-postgres.sql: Infrastructure (one-time setup)
+# - Alembic: Schema evolution (repeatable, versionable)
+# - ORM models: Application logic (generated from schema)
+
+sqlalchemy==2.0.23                   # ORM and SQL toolkit
+alembic==1.12.1                      # Database schema migrations
+
+# ============================================================================
+# TESTING (Checkpoint 0.1)
+# ============================================================================
+
+pytest==8.3.3                        # Testing framework
+pytest-cov==5.0.0                    # Coverage reporting
+
+# ============================================================================
+# FUTURE DEPENDENCIES (Added in later checkpoints)
+# ============================================================================
+#
+# Checkpoint 0.3+: Logging, metrics
+# Checkpoint 0.4+: Configuration validation (Pydantic)
+# Checkpoint 1.1+: GitHub API client, HTTP requests
+# Checkpoint 2.x+: Data processing (Pandas, Polars)
+# Checkpoint 3.x+: ML and embeddings
+# Checkpoint 6.1+: API framework (FastAPI, Uvicorn)
+#
+# This minimal approach:
+# - Fast initial setup
+# - Clear separation of concerns
+# - Each checkpoint owns its dependencies
+# - Avoids installing unused packages

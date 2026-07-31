@@ -4,6 +4,37 @@ An AI-powered intelligence layer over GitHub's public data — see [`claude.md`]
 
 **Project status:** Milestone 0 — Project Foundation (see [`IMPLEMENTATION_ROADMAP.md`](IMPLEMENTATION_ROADMAP.md) for full progress tracking).
 
+## Architecture Overview
+
+This project follows a **layered architecture** with clear separation of concerns:
+
+```
+Infrastructure Layer (Checkpoint 0.1)
+├─ Docker Compose: PostgreSQL, Redis, pgAdmin
+├─ init-postgres.sql: Database creation, extensions, users
+└─ No application schema tables
+
+Schema Layer (Checkpoint 0.2+)
+├─ Alembic: Database migrations
+├─ Single source of truth for schema evolution
+└─ Versionable: every schema change is a migration
+
+Application Layer (Checkpoint 0.3+)
+├─ SQLAlchemy: ORM models
+├─ Business logic
+└─ Queries and database access
+```
+
+**Why this separation?**
+- Infrastructure is one-time setup (rarely changes)
+- Schema evolves as features develop (tracked in git, reversible)
+- Application logic is independent of schema details
+- Each layer independently testable and reviewable
+
+**Key principle:** `init-postgres.sql` creates infrastructure only. Schema is managed by Alembic migrations. This enables proper versioning and rollback in production.
+
+See [`docs/architecture/adr/`](docs/architecture/adr/) for detailed architectural decisions.
+
 ## Foundational Documents
 
 Read in this order before contributing:
@@ -37,44 +68,88 @@ These documents are frozen. Implementation follows them; it does not redesign th
 
 ### Quick Start (5 Minutes)
 
+**Using Make (Recommended):**
 ```bash
-# 1. Clone repository and enter project
+# Clone and enter project
 git clone <repo-url>
 cd GitHub-AI-Analytics
 
-# 2. Copy environment template (uses safe defaults)
+# One command: create venv, install deps, start services
+make dev-setup
+
+# Verify: run tests
+make test
+```
+
+**Manual Setup:**
+```bash
+# 1. Clone and enter
+git clone <repo-url>
+cd GitHub-AI-Analytics
+
+# 2. Copy environment configuration
 cp .env.example .env
-# Edit .env only if you need non-default ports or credentials
 
-# 3. Start Docker services (PostgreSQL, Redis, pgAdmin)
+# 3. Start services
 docker compose up -d
+docker compose ps  # Should show "Up (healthy)"
 
-# Verify all services are healthy
-docker compose ps
-# Should show postgres, redis, pgadmin with STATUS "Up (healthy)"
-
-# 4. Create Python virtual environment
+# 4. Create virtual environment
 python -m venv venv
 
-# 5. Activate virtual environment
-# On Windows (cmd.exe):
-venv\Scripts\activate.bat
-# Or PowerShell:
-venv\Scripts\Activate.ps1
-# On macOS/Linux:
-source venv/bin/activate
+# 5. Activate
+# Windows: venv\Scripts\activate.bat
+# Unix: source venv/bin/activate
 
-# 6. Install Python dependencies
+# 6. Install dependencies
 pip install -r requirements.txt
 
-# 7. Verify environment (runs tests that check Docker connectivity)
+# 7. Verify (runs tests)
 pytest tests/ -v
-
-# If you see "PASSED" for database tests: ✓ Setup complete!
-# If tests are "SKIPPED": Services not ready yet (wait 10 seconds, retry)
 ```
 
 **Expected setup time:** 3-5 minutes (including Docker image pulls on first run)
+
+**Common Commands:**
+- `make up` — Start services
+- `make down` — Stop services
+- `make db-shell` — Connect to PostgreSQL
+- `make logs` — View logs
+- `make test` — Run tests
+- `make help` — See all commands
+
+See [`Makefile`](Makefile) for complete command list.
+
+### Database Schema & Migrations
+
+**Important:** The database schema is managed by **Alembic**, not init-postgres.sql.
+
+**Current State (Checkpoint 0.1):**
+- `init-postgres.sql` creates infrastructure only (users, extensions, permissions)
+- No application schema tables exist yet
+- Database is empty and ready for Alembic
+
+**In Checkpoint 0.2:**
+- Alembic will design and create the schema
+- First migration: `001_initial_schema.py`
+- After each `git pull`, run: `alembic upgrade head`
+
+**Migration Workflow (Checkpoint 0.2+):**
+```bash
+# Create new migration after schema change
+alembic revision --autogenerate -m "description of change"
+
+# Review generated migration
+vim alembic/versions/00X_description.py
+
+# Apply migration to your database
+alembic upgrade head
+
+# Rollback if needed
+alembic downgrade -1
+```
+
+See [`docs/architecture/adr/ADR-003-separate-infrastructure-from-schema.md`](docs/architecture/adr/ADR-003-separate-infrastructure-from-schema.md) for rationale.
 
 ### Accessing Services
 
@@ -86,6 +161,7 @@ Once `docker compose up -d` completes and health checks pass:
 - **App User:** `repo_user` / `repo_password`
 - **Database:** `ai_analytics`
 - **Connection String:** `postgresql://repo_user:repo_password@localhost:5432/ai_analytics`
+- **Quick Connect:** `make db-shell` or `docker compose exec postgres psql -U repo_user -d ai_analytics`
 
 **pgAdmin (Web UI)**
 - **URL:** `http://localhost:5050`
