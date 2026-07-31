@@ -1,0 +1,19 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "Repository Intelligence (Local Development)",
+      "Group": "Development",
+      "Host": "postgres",
+      "Port": 5432,
+      "Database": "ai_analytics",
+      "Username": "repo_user",
+      "Password": "repo_password",
+      "SSLMode": "prefer",
+      "Description": "Local development PostgreSQL instance for Repository Intelligence Engine",
+      "Shared": false,
+      "MaintenanceDB": "postgres",
+      "Maintenance User": "postgres",
+      "Maintenance Password": "postgres_admin"
+    }
+  }
+}
