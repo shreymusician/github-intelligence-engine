@@ -3,7 +3,7 @@
 **Checkpoint:** 0.2 (Database Schema Design & Initial Migrations)
 **Design status:** FROZEN — see `DATABASE_DESIGN_CHANGELOG.md` at repo root
 **Last updated:** 2026-08-01
-**Current Alembic revision:** `005` (`005_repository_snapshot_history`)
+**Current Alembic revision:** `006` (`006_feature_store`)
 
 This document tracks *implementation* progress against the frozen design. It is not itself a design document — for the authoritative schema, see `DATABASE_DESIGN.md`, `ENTITY_RELATIONSHIP_MODEL.md`, `QUERY_DRIVEN_SCHEMA_DESIGN.md`, `MIGRATION_STRATEGY.md`, `DATABASE_ARCHITECT_REVIEW.md`, and `DATABASE_DESIGN_CHANGELOG.md` at the repository root.
 
@@ -18,12 +18,12 @@ This document tracks *implementation* progress against the frozen design. It is 
 | 003 | `003_repository_taxonomy_associations` | `repository_topics`, `repository_technologies` | ✅ Applied, verified, rollback-tested | `MIGRATION_003_REPORT.md` |
 | 004 | `004_repository_dependencies` | `repository_dependencies` | ✅ Applied, verified, rollback-tested | `MIGRATION_004_REPORT.md` |
 | 005 | `005_repository_snapshot_history` | `repository_snapshot` | ✅ Applied, verified, rollback-tested | `MIGRATION_005_REPORT.md` |
-| 006 | `006_feature_store` | `repository_metrics` | ⭕ Not started | — |
+| 006 | `006_feature_store` | `repository_metrics` | ✅ Applied, verified, rollback-tested | `MIGRATION_006_REPORT.md` |
 | 007 | `007_intelligence_scores` | `repository_scores` | ⭕ Not started | — |
 | 008 | `008_embeddings` | `repository_embeddings` | ⭕ Not started | — |
 | 009 | `009_similarity` | `repository_similarity` | ⭕ Not started | — |
 
-**5 of 9 migrations complete.** All applied migrations have been individually verified (structural + functional), rollback-tested (`downgrade -1` / `downgrade base`), and re-applied cleanly, per the engineering workflow established starting with Migration 001.
+**6 of 9 migrations complete.** All applied migrations have been individually verified (structural + functional), rollback-tested (`downgrade -1` / `downgrade base`), and re-applied cleanly, per the engineering workflow established starting with Migration 001.
 
 ---
 
@@ -40,8 +40,9 @@ This document tracks *implementation* progress against the frozen design. It is 
 | `repository_technologies` | 003 | ~5-15 rows/repo | Associative entity; includes `removed_at` (Finding 6) |
 | `repository_dependencies` | 004 | ~30-100 rows/repo | Highest-volume table; first partitioning candidate (Finding 9) |
 | `repository_snapshot` | 005 | Weekly cadence × repo count | `size_kb`'s sole authoritative home (Finding 2); coordinated partitioning target with `repository_metrics` (006) |
+| `repository_metrics` | 006 | Weekly cadence × repo count | Feature store, largest table (30 cols); coordinated partitioning target with `repository_snapshot` (005) |
 
-**9 tables, 21 named indexes (excluding `alembic_version`), 3 CHECK constraints, 8 foreign keys, 8 enum types**, as of revision `005`.
+**10 tables, 35 named indexes (excluding `alembic_version`; includes PK- and unique-constraint-backing indexes), 2 CHECK constraints, 9 foreign keys, 8 enum types**, as of revision `006`.
 
 ---
 
@@ -56,7 +57,7 @@ This document tracks *implementation* progress against the frozen design. It is 
 | `detected_via` | manifest, dockerfile, ci_config, linguist | 003 |
 | `package_ecosystem` | npm, pypi, cargo, go, maven, nuget, rubygems | 004 |
 
-(`repository_snapshot`, Migration 005, introduces no new enum type.)
+(`repository_snapshot`, Migration 005, and `repository_metrics`, Migration 006, introduce no new enum types.)
 
 ---
 
@@ -74,7 +75,7 @@ All findings from `DATABASE_ARCHITECT_REVIEW.md` were resolved at the **design**
 | 6. No removal timestamp on technology associations | Medium | `removed_at` added | ✅ Migration 003 |
 | 7. Embedding vector dimension mismatch | **High** | `vector(768)` | ⭕ Pending Migration 008 |
 | 8. Normalized ML feature-vector storage undecided | Low | Deferred to Checkpoint 2.6 | N/A (no schema object yet) |
-| 9. Partitioning key not committed | **High** | Declared (not implemented) for 4 tables | ✅ Documented in Migrations 004-005; pending 006-007 |
+| 9. Partitioning key not committed | **High** | Declared (not implemented) for 4 tables | ✅ Documented in Migrations 004-006; pending 007 |
 | 10. CASCADE delete blast radius | Medium | Operational guidance only | ✅ Documented in Migration 002+ reports |
 | 11. Columnar-migration commitment | Medium | DAO/repository abstraction guidance | Carried forward, not yet applicable (no ORM layer built yet) |
 | 12. `first_seen_at`/`created_at` redundant | Low | `first_seen_at` removed | ✅ Migration 002 (confirmed absent) |
@@ -84,7 +85,7 @@ All findings from `DATABASE_ARCHITECT_REVIEW.md` were resolved at the **design**
 
 ---
 
-## Verification Methodology (Applied Uniformly, Migrations 001-005)
+## Verification Methodology (Applied Uniformly, Migrations 001-006)
 
 Every migration listed above followed the same 7-phase workflow:
 
@@ -106,10 +107,10 @@ These are documented in the frozen design as intentionally deferred, not impleme
 
 - **Point-in-time technology reconstruction** (Category H, Query 68) — accepted V1 gap, narrowed by `removed_at` (Migration 003) but not fully solved.
 - **Normalized/scaled ML feature vectors** (Finding 8) — no table exists yet; deferred to Checkpoint 2.6's implementer.
-- **Physical partitioning** — declared partition keys exist in documentation (Migrations 004-005; pending 006-007) but no `PARTITION BY` DDL has been executed anywhere, per the frozen design's explicit YAGNI stance. Trigger condition: any of the four flagged tables approaching 10-50M actual rows.
+- **Physical partitioning** — declared partition keys exist in documentation (Migrations 004-006; pending 007) but no `PARTITION BY` DDL has been executed anywhere, per the frozen design's explicit YAGNI stance. Trigger condition: any of the four flagged tables approaching 10-50M actual rows.
 
 ---
 
 ## Next Step
 
-**Migration 006** (`006_feature_store`: `repository_metrics`) — the largest single table definition in the schema (~27 typed columns + 2 JSONB columns), coordinated with Migration 005 for future partitioning on `snapshot_date`. Awaiting user review of Migration 005 before proceeding.
+**Migration 007** (`007_intelligence_scores`: `repository_scores`) — versioned intelligence outputs, read by Search and Recommendations. Only a soft/application-level dependency on `006_feature_store` (no DB-level FK); its only hard schema dependency is `002_core_entities`. Awaiting user review of Migration 006 before proceeding.
