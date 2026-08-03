@@ -1,9 +1,9 @@
 # Database Implementation Status
 
-**Checkpoint:** 0.2 (Database Schema Design & Initial Migrations)
+**Checkpoint:** 0.2 (Database Schema Design & Initial Migrations) — ✅ **COMPLETE**
 **Design status:** FROZEN — see `DATABASE_DESIGN_CHANGELOG.md` at repo root
 **Last updated:** 2026-08-03
-**Current Alembic revision:** `008` (`008_embeddings`)
+**Current Alembic revision:** `009` (`009_similarity`)
 
 This document tracks *implementation* progress against the frozen design. It is not itself a design document — for the authoritative schema, see `DATABASE_DESIGN.md`, `ENTITY_RELATIONSHIP_MODEL.md`, `QUERY_DRIVEN_SCHEMA_DESIGN.md`, `MIGRATION_STRATEGY.md`, `DATABASE_ARCHITECT_REVIEW.md`, and `DATABASE_DESIGN_CHANGELOG.md` at the repository root.
 
@@ -21,9 +21,9 @@ This document tracks *implementation* progress against the frozen design. It is 
 | 006 | `006_feature_store` | `repository_metrics` | ✅ Applied, verified, rollback-tested | `MIGRATION_006_REPORT.md` |
 | 007 | `007_intelligence_scores` | `repository_scores` | ✅ Applied, verified, rollback-tested | `MIGRATION_007_REPORT.md` |
 | 008 | `008_embeddings` | `repository_embeddings` | ✅ Applied, verified, rollback-tested | `MIGRATION_008_REPORT.md` |
-| 009 | `009_similarity` | `repository_similarity` | ⭕ Not started | — |
+| 009 | `009_similarity` | `repository_similarity` | ✅ Applied, verified, rollback-tested | `MIGRATION_009_REPORT.md` |
 
-**8 of 9 migrations complete.** All applied migrations have been individually verified (structural + functional), rollback-tested (`downgrade -1` / `downgrade base`), and re-applied cleanly, per the engineering workflow established starting with Migration 001.
+**9 of 9 migrations complete. Checkpoint 0.2 is COMPLETE.** All applied migrations have been individually verified (structural + functional), rollback-tested (`downgrade -1` / `downgrade base`), and re-applied cleanly, per the engineering workflow established starting with Migration 001. See `CHECKPOINT_0_2_FINAL_REPORT.md` for the consolidated checkpoint summary.
 
 **Infrastructure note:** The `postgres` service image was upgraded to `pgvector/pgvector:pg17` (from `postgres:17-alpine`) ahead of Migration 008 — same PostgreSQL major version, existing data volume preserved, `vector` extension (0.8.6) confirmed installed. No prior migration required modification as a result.
 
@@ -45,8 +45,9 @@ This document tracks *implementation* progress against the frozen design. It is 
 | `repository_metrics` | 006 | Weekly cadence × repo count | Feature store, largest table (30 cols); coordinated partitioning target with `repository_snapshot` (005) |
 | `repository_scores` | 007 | 3 score types × weekly cadence × repo count | Append-only/versioned intelligence output; no unique constraint (deliberate); coordinated partitioning target (`computed_at`) with 005/006 |
 | `repository_embeddings` | 008 | 1+ rows per (repository, model) | Model-scoped `vector(768)` semantic embeddings; composite PK `(repository_id, model_name)`; no ANN index yet (deferred to Milestone 4.2); resolves Architect Review Finding 7 |
+| `repository_similarity` | 009 | Bounded: repo count × K × method count (linear, not quadratic) | Precomputed top-K similarity pairs; only self-referential table (two FKs to `repositories.id`); composite PK `(repository_id, similar_repository_id, similarity_method)`; `CHECK` prevents self-similarity; no partition key (rows replaced, not accumulated) |
 
-**12 tables, 38 named indexes (excluding `alembic_version`; includes PK-backing indexes), 2 CHECK constraints, 11 foreign keys, 7 enum types**, as of revision `008`.
+**13 tables, 40 named indexes (excluding `alembic_version`; includes PK-backing indexes), 3 CHECK constraints, 13 foreign keys, 8 enum types**, as of revision `009`. Counts independently confirmed via `information_schema`/`pg_catalog` queries against the live database.
 
 ---
 
@@ -61,8 +62,9 @@ This document tracks *implementation* progress against the frozen design. It is 
 | `detected_via` | manifest, dockerfile, ci_config, linguist | 003 |
 | `package_ecosystem` | npm, pypi, cargo, go, maven, nuget, rubygems | 004 |
 | `score_type` | difficulty, quality, community_health | 007 |
+| `similarity_method` | embedding_cosine, feature_distance, hybrid | 009 |
 
-(`repository_snapshot`, Migration 005, and `repository_metrics`, Migration 006, introduce no new enum types.)
+(`repository_snapshot` (005), `repository_metrics` (006), and `repository_embeddings` (008) introduce no new enum types.)
 
 ---
 
@@ -86,11 +88,11 @@ All findings from `DATABASE_ARCHITECT_REVIEW.md` were resolved at the **design**
 | 12. `first_seen_at`/`created_at` redundant | Low | `first_seen_at` removed | ✅ Migration 002 (confirmed absent) |
 | 13. (Restates Finding 1) | Low | Same as Finding 1 | ✅ Migration 002 |
 
-**All 4 High-severity findings applicable so far (4, 7, 9) are now realized in the database.**
+**All 4 High-severity findings (4, 7, 9) are now realized in the database. All 13 findings from the Architect Review have reached their planned resolution state as of Checkpoint 0.2's completion** — the remaining non-✅ rows (8, 11) are explicitly deferred to later checkpoints by the frozen design itself, not outstanding work within 0.2.
 
 ---
 
-## Verification Methodology (Applied Uniformly, Migrations 001-008)
+## Verification Methodology (Applied Uniformly, Migrations 001-009)
 
 Every migration listed above followed the same 7-phase workflow:
 
@@ -114,9 +116,12 @@ These are documented in the frozen design as intentionally deferred, not impleme
 - **Normalized/scaled ML feature vectors** (Finding 8) — no table exists yet; deferred to Checkpoint 2.6's implementer.
 - **Physical partitioning** — declared partition keys exist in documentation for all four flagged tables (Migrations 004-007, now all implemented) but no `PARTITION BY` DDL has been executed anywhere, per the frozen design's explicit YAGNI stance. Trigger condition: any of the four flagged tables approaching 10-50M actual rows.
 - **ANN vector index** (HNSW/IVFFlat) on `repository_embeddings.embedding` — deliberately deferred to a Milestone 4.2 implementation decision per `QUERY_DRIVEN_SCHEMA_DESIGN.md` §14.12, since index choice depends on eventual corpus size. Only the implicit PK btree exists on this table today.
+- **Hybrid similarity weighting breakdown** — `repository_similarity.similarity_method = 'hybrid'` has no column recording how the score was weighted (e.g., 60% keyword / 40% semantic). `DATABASE_ARCHITECT_REVIEW.md` logs this as a likely future addition to a `score_breakdown`-style JSONB column, not a current gap — no query in the V1 workload needs it.
 
 ---
 
-## Next Step
+## Checkpoint 0.2 Status: COMPLETE
 
-**Migration 009** (`009_similarity`: `repository_similarity`) — not yet started. Only soft/application-level dependency on `008_embeddings` (no DB-level FK); `similarity_method` can be `'embedding_cosine'` (sourced from `repository_embeddings`) or `'feature_distance'` (sourced from `repository_metrics`, Migration 006). Awaiting user review of Migration 008 before proceeding.
+All 9 migrations (001–009) are applied, individually structurally and functionally verified, rollback-tested, and re-applied cleanly. All 12 core entities from `DATABASE_DESIGN.md` are physically realized. See `CHECKPOINT_0_2_FINAL_REPORT.md` for the full consolidated summary, readiness assessment, and suggested Git commit/tag for closing out this checkpoint.
+
+**Next Step:** Checkpoint 1.1 (GitHub Repository Acquisition) — not started. Awaiting user review of Migration 009 and the Checkpoint 0.2 Final Report before proceeding.
