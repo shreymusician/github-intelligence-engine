@@ -2,8 +2,8 @@
 
 **Checkpoint:** 0.2 (Database Schema Design & Initial Migrations)
 **Design status:** FROZEN — see `DATABASE_DESIGN_CHANGELOG.md` at repo root
-**Last updated:** 2026-08-01
-**Current Alembic revision:** `007` (`007_intelligence_scores`)
+**Last updated:** 2026-08-03
+**Current Alembic revision:** `008` (`008_embeddings`)
 
 This document tracks *implementation* progress against the frozen design. It is not itself a design document — for the authoritative schema, see `DATABASE_DESIGN.md`, `ENTITY_RELATIONSHIP_MODEL.md`, `QUERY_DRIVEN_SCHEMA_DESIGN.md`, `MIGRATION_STRATEGY.md`, `DATABASE_ARCHITECT_REVIEW.md`, and `DATABASE_DESIGN_CHANGELOG.md` at the repository root.
 
@@ -20,10 +20,12 @@ This document tracks *implementation* progress against the frozen design. It is 
 | 005 | `005_repository_snapshot_history` | `repository_snapshot` | ✅ Applied, verified, rollback-tested | `MIGRATION_005_REPORT.md` |
 | 006 | `006_feature_store` | `repository_metrics` | ✅ Applied, verified, rollback-tested | `MIGRATION_006_REPORT.md` |
 | 007 | `007_intelligence_scores` | `repository_scores` | ✅ Applied, verified, rollback-tested | `MIGRATION_007_REPORT.md` |
-| 008 | `008_embeddings` | `repository_embeddings` | ⭕ Not started | — |
+| 008 | `008_embeddings` | `repository_embeddings` | ✅ Applied, verified, rollback-tested | `MIGRATION_008_REPORT.md` |
 | 009 | `009_similarity` | `repository_similarity` | ⭕ Not started | — |
 
-**7 of 9 migrations complete.** All applied migrations have been individually verified (structural + functional), rollback-tested (`downgrade -1` / `downgrade base`), and re-applied cleanly, per the engineering workflow established starting with Migration 001.
+**8 of 9 migrations complete.** All applied migrations have been individually verified (structural + functional), rollback-tested (`downgrade -1` / `downgrade base`), and re-applied cleanly, per the engineering workflow established starting with Migration 001.
+
+**Infrastructure note:** The `postgres` service image was upgraded to `pgvector/pgvector:pg17` (from `postgres:17-alpine`) ahead of Migration 008 — same PostgreSQL major version, existing data volume preserved, `vector` extension (0.8.6) confirmed installed. No prior migration required modification as a result.
 
 ---
 
@@ -42,8 +44,9 @@ This document tracks *implementation* progress against the frozen design. It is 
 | `repository_snapshot` | 005 | Weekly cadence × repo count | `size_kb`'s sole authoritative home (Finding 2); coordinated partitioning target with `repository_metrics` (006) |
 | `repository_metrics` | 006 | Weekly cadence × repo count | Feature store, largest table (30 cols); coordinated partitioning target with `repository_snapshot` (005) |
 | `repository_scores` | 007 | 3 score types × weekly cadence × repo count | Append-only/versioned intelligence output; no unique constraint (deliberate); coordinated partitioning target (`computed_at`) with 005/006 |
+| `repository_embeddings` | 008 | 1+ rows per (repository, model) | Model-scoped `vector(768)` semantic embeddings; composite PK `(repository_id, model_name)`; no ANN index yet (deferred to Milestone 4.2); resolves Architect Review Finding 7 |
 
-**11 tables, 37 named indexes (excluding `alembic_version`; includes PK-backing indexes), 2 CHECK constraints, 10 foreign keys, 7 enum types**, as of revision `007`.
+**12 tables, 38 named indexes (excluding `alembic_version`; includes PK-backing indexes), 2 CHECK constraints, 11 foreign keys, 7 enum types**, as of revision `008`.
 
 ---
 
@@ -75,7 +78,7 @@ All findings from `DATABASE_ARCHITECT_REVIEW.md` were resolved at the **design**
 | 4. No repository-lifecycle "gone from GitHub" state | **High** | `is_accessible`, `inaccessible_since` added | ✅ Migration 002 |
 | 5. Snapshot cadence assumed daily | Medium | Defaulted to weekly | ✅ Migration 005 |
 | 6. No removal timestamp on technology associations | Medium | `removed_at` added | ✅ Migration 003 |
-| 7. Embedding vector dimension mismatch | **High** | `vector(768)` | ⭕ Pending Migration 008 |
+| 7. Embedding vector dimension mismatch | **High** | `vector(768)` | ✅ Migration 008 |
 | 8. Normalized ML feature-vector storage undecided | Low | Deferred to Checkpoint 2.6 | N/A (no schema object yet) |
 | 9. Partitioning key not committed | **High** | Declared (not implemented) for 4 tables | ✅ Documented in Migrations 004-007 (all 4 flagged tables now exist) |
 | 10. CASCADE delete blast radius | Medium | Operational guidance only | ✅ Documented in Migration 002+ reports |
@@ -83,11 +86,11 @@ All findings from `DATABASE_ARCHITECT_REVIEW.md` were resolved at the **design**
 | 12. `first_seen_at`/`created_at` redundant | Low | `first_seen_at` removed | ✅ Migration 002 (confirmed absent) |
 | 13. (Restates Finding 1) | Low | Same as Finding 1 | ✅ Migration 002 |
 
-**All 3 High-severity findings applicable so far (4, 9) are realized in the database; Finding 7 awaits Migration 008.**
+**All 4 High-severity findings applicable so far (4, 7, 9) are now realized in the database.**
 
 ---
 
-## Verification Methodology (Applied Uniformly, Migrations 001-007)
+## Verification Methodology (Applied Uniformly, Migrations 001-008)
 
 Every migration listed above followed the same 7-phase workflow:
 
@@ -110,9 +113,10 @@ These are documented in the frozen design as intentionally deferred, not impleme
 - **Point-in-time technology reconstruction** (Category H, Query 68) — accepted V1 gap, narrowed by `removed_at` (Migration 003) but not fully solved.
 - **Normalized/scaled ML feature vectors** (Finding 8) — no table exists yet; deferred to Checkpoint 2.6's implementer.
 - **Physical partitioning** — declared partition keys exist in documentation for all four flagged tables (Migrations 004-007, now all implemented) but no `PARTITION BY` DDL has been executed anywhere, per the frozen design's explicit YAGNI stance. Trigger condition: any of the four flagged tables approaching 10-50M actual rows.
+- **ANN vector index** (HNSW/IVFFlat) on `repository_embeddings.embedding` — deliberately deferred to a Milestone 4.2 implementation decision per `QUERY_DRIVEN_SCHEMA_DESIGN.md` §14.12, since index choice depends on eventual corpus size. Only the implicit PK btree exists on this table today.
 
 ---
 
 ## Next Step
 
-**Migration 008** (`008_embeddings`: `repository_embeddings`) — model-scoped semantic vectors using `pgvector` (`vector(768)`, resolving Architect Review Finding 7). Requires the `vector` extension, already installed during Checkpoint 0.1. Only hard schema dependency is `002_core_entities`. Awaiting user review of Migration 007 before proceeding.
+**Migration 009** (`009_similarity`: `repository_similarity`) — not yet started. Only soft/application-level dependency on `008_embeddings` (no DB-level FK); `similarity_method` can be `'embedding_cosine'` (sourced from `repository_embeddings`) or `'feature_distance'` (sourced from `repository_metrics`, Migration 006). Awaiting user review of Migration 008 before proceeding.
