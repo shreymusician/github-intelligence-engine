@@ -37,6 +37,7 @@ PyYAML==6.0.2                        # YAML parsing
 
 sqlalchemy==2.0.23                   # ORM and SQL toolkit
 alembic==1.12.1                      # Database schema migrations
+pgvector==0.3.6                      # SQLAlchemy Vector type (pgvector extension, Migration 008)
 
 # ============================================================================
 # TESTING (Checkpoint 0.1)

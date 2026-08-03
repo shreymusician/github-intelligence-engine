@@ -32,7 +32,7 @@ services:
   #
   # Version 17: Latest stable, includes performance improvements
   postgres:
-    image: postgres:17-alpine
+    image: pgvector/pgvector:pg17
     container_name: repo_intelligence_postgres
 
     # Service name used for internal communication
