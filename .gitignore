@@ -8,6 +8,7 @@
 *.pem                    # Private keys
 *.key                    # Private keys
 secrets.json            # Local secrets file
+PAT*.txt                # Personal access token scratch files (found tracked pre-.gitignore; untracked in Checkpoint 1.1.d cleanup)
 
 # ============================================================================
 # PYTHON
