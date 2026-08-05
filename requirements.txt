@@ -47,12 +47,17 @@ pytest==8.3.3                        # Testing framework
 pytest-cov==5.0.0                    # Coverage reporting
 
 # ============================================================================
+# GITHUB API CLIENT (Checkpoint 1.1.c)
+# ============================================================================
+
+requests==2.32.3                     # Synchronous HTTP client for GitHub REST API
+
+# ============================================================================
 # FUTURE DEPENDENCIES (Added in later checkpoints)
 # ============================================================================
 #
 # Checkpoint 0.3+: Logging, metrics
 # Checkpoint 0.4+: Configuration validation (Pydantic)
-# Checkpoint 1.1+: GitHub API client, HTTP requests
 # Checkpoint 2.x+: Data processing (Pandas, Polars)
 # Checkpoint 3.x+: ML and embeddings
 # Checkpoint 6.1+: API framework (FastAPI, Uvicorn)
