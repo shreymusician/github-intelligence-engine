@@ -18,6 +18,14 @@ Reuses config/settings.py, logging_setup.py, github_client.retry, and
 github_client.rate_limiter without modifying any of them - RateLimitInfo
 is constructed directly here (it's a plain dataclass with public
 fields) rather than adding a new classmethod to rate_limiter.py.
+
+2026-08-06 additive extension (Checkpoint 1.3 impact analysis): the
+repository query gained repositoryTopics/stargazerCount/forkCount/
+watchers/issues/pullRequests/diskUsage field selections, populating
+RepositoryData's new topics/license_name/stars_count/forks_count/
+watchers_count/open_issues_count/size_kb fields - same single query,
+no new query added. open_issues_count sums issues(OPEN) + pullRequests(OPEN)
+to match REST's combined issue+PR semantics (see _parse_repository).
 """
 
 from __future__ import annotations
@@ -64,7 +72,7 @@ query($owner: String!, $name: String!) {
     nameWithOwner
     description
     primaryLanguage { name }
-    licenseInfo { spdxId }
+    licenseInfo { spdxId name }
     isArchived
     isFork
     createdAt
@@ -75,6 +83,12 @@ query($owner: String!, $name: String!) {
       ... on User { databaseId avatarUrl }
       ... on Organization { databaseId avatarUrl }
     }
+    repositoryTopics(first: 20) { nodes { topic { name } } }
+    stargazerCount
+    forkCount
+    issues(states: OPEN) { totalCount }
+    pullRequests(states: OPEN) { totalCount }
+    diskUsage
   }
 """
     + _RATE_LIMIT_FIELD
@@ -230,6 +244,14 @@ class GitHubGraphQLClient:
             )
             language = payload.get("primaryLanguage")
             license_info = payload.get("licenseInfo")
+            topic_nodes = payload["repositoryTopics"]["nodes"]
+            # REST's open_issues_count counts issues AND pull requests - GitHub's
+            # REST API considers every pull request an issue (see
+            # docs/rest/issues/issues#list-repository-issues). GraphQL's `issues`
+            # connection excludes pull requests, so the two must be summed here
+            # to keep both clients' open_issues_count semantically equivalent
+            # (2026-08-06 engineering decision, Checkpoint 1.3 impact analysis).
+            open_issues_count = payload["issues"]["totalCount"] + payload["pullRequests"]["totalCount"]
             return RepositoryData(
                 github_id=payload["databaseId"],
                 name=payload["name"],
@@ -243,6 +265,22 @@ class GitHubGraphQLClient:
                 pushed_at=payload.get("pushedAt"),
                 owner=owner,
                 rate_limit=rate_limit,
+                topics=tuple(node["topic"]["name"] for node in topic_nodes),
+                license_name=license_info.get("name") if license_info else None,
+                stars_count=payload["stargazerCount"],
+                forks_count=payload["forkCount"],
+                # watchers_count mirrors stars_count, not GraphQL's `watchers`
+                # connection - see QUERY_DRIVEN_SCHEMA_DESIGN.md's watchers_count
+                # note ("near-duplicate of stars_count since GitHub merged
+                # 'watching' into starring") and _parse_repository's REST
+                # counterpart, which gets this value directly from GitHub's own
+                # merged watchers_count field. GraphQL's `watchers` connection
+                # reflects the old, unmerged "subscribed for notifications"
+                # count, a genuinely different (smaller) number - live-verified
+                # divergent from stars_count for the same repository.
+                watchers_count=payload["stargazerCount"],
+                open_issues_count=open_issues_count,
+                size_kb=payload.get("diskUsage") or 0,  # diskUsage is nullable (e.g. empty repos)
             )
         except KeyError as exc:
             raise GitHubAPIError(f"GraphQL response missing expected field: {exc}") from exc

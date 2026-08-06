@@ -206,3 +206,48 @@ No project-level status document (`IMPLEMENTATION_ROADMAP.md`'s own table, `DATA
 **Checkpoint 1.1 (a–h) is functionally COMPLETE. Final sign-off awaiting your review, particularly your decision on Finding 1.**
 
 **Not proceeding to Checkpoint 1.2. Awaiting your approval.**
+
+---
+
+## 12. Addendum (2026-08-06): Additive Extension for Checkpoint 1.3
+
+Checkpoint 1.2 was subsequently deferred for V1 (`ADR_004_DEFER_BIGQUERY_FOR_V1.md`), and Checkpoint 1.3 (Repository Acquisition Pipeline) began planning directly after this checkpoint's sign-off. A formal impact analysis (before any code was touched) found that `repository_snapshot`, `licenses.name`, and `topics`/`repository_topics` — all tables Checkpoint 1.3 needs to write — require seven fields GitHub already returns on the same single REST/GraphQL calls this checkpoint already makes, but never parsed out. This addendum documents the resulting additive change, made under explicit review at each step (impact analysis → architecture review → engineering decision → implementation → verification), not as an unreviewed extension of a "signed off" checkpoint.
+
+### 12.1 Why `RepositoryData` remained flat (not a nested `RepositorySnapshot` object)
+
+A dedicated architecture review compared two designs: (A) add the seven fields directly to `RepositoryData`, or (B) introduce a separate `RepositorySnapshot` value object nested inside it, mirroring the `repository_snapshot` database table. **Option A (flat) was chosen**, on the reasoning that `RepositoryData` is an **API transport DTO**, not the domain model — its documented purpose (§this report, and `CHECKPOINT_1_1C_REPORT.md`) has always been "map this object to a row with minimal translation," for exactly one row shape at a time. `repository_snapshot` being a separate *database table* (a persistence/lifecycle concern, owned by Checkpoint 1.3's storage layer) does not, by itself, obligate a separate *Python object* at the fetch layer — introducing one now, before any consumer of these fields exists, would be exactly the kind of speculative abstraction this project's "minimal change" discipline (established since 1.1.a) has consistently avoided. If Checkpoint 1.6 (Incremental Update Strategy) later needs to fetch/refresh snapshot fields independently of full repository identity, extracting a `RepositorySnapshot` type at that point — once a real caller demonstrates the need — remains straightforward, since all seven new fields already carry defaults.
+
+### 12.2 The REST-vs-GraphQL `open_issues_count` decision
+
+Confirmed via GitHub's own documentation (`docs/rest/issues/issues#list-repository-issues`, fetched live, not assumed): *"GitHub's REST API considers every pull request an issue, but not every issue is a pull request."* REST's `open_issues_count` therefore counts issues **and** pull requests combined; GraphQL's `issues(states: OPEN)` connection excludes pull requests. To keep both clients semantically equivalent (the interchangeability goal `CHECKPOINT_1_1F_REPORT.md` established), `GitHubGraphQLClient._parse_repository` now sums `issues(states: OPEN).totalCount + pullRequests(states: OPEN).totalCount`. Live-verified exact agreement with REST on two repositories, including `facebook/react` (1,247 open issues+PRs on both clients, non-trivial — not an accidental zero-match).
+
+### 12.3 A second semantic mismatch found during live verification: `watchers_count`
+
+Not anticipated in the original impact analysis or engineering-decision phase — found only once live verification compared real REST and GraphQL responses for the same repository and got **different numbers** (REST 3,751 vs. GraphQL 1,737, for `octocat/Hello-World`). Root cause: `QUERY_DRIVEN_SCHEMA_DESIGN.md` documents `repository_snapshot.watchers_count` as "a near-duplicate of `stars_count` since GitHub merged 'watching' into starring" — which is exactly what REST's `watchers_count` field is (empirically confirmed: always equals `stargazers_count`). GraphQL's `watchers { totalCount }` connection, however, reflects the *old*, unmerged "subscribed for notifications" count GitHub never folded into GraphQL's schema the way it did REST's. Using it would have silently violated the schema's documented semantics and made REST-sourced and GraphQL-sourced snapshot rows disagree for the same repository. **Fixed:** `watchers_count` is now derived from `stargazerCount` in the GraphQL client (matching REST's semantics directly), and the now-unnecessary `watchers` field was removed from the query. This is flagged explicitly, not silently corrected — it's a real example of why live verification against two independent real API responses catches things design review and mocked tests alone cannot.
+
+### 12.4 What changed
+
+| File | Change |
+|---|---|
+| `github_client/rest.py` | `RepositoryData` gained `topics`, `license_name`, `stars_count`, `forks_count`, `watchers_count`, `open_issues_count`, `size_kb` (all defaulted); `_parse_repository` parses them from the existing `GET /repos/{owner}/{repo}` response — no new endpoint |
+| `github_client/graphql.py` | `_REPOSITORY_QUERY` gained `repositoryTopics`, `stargazerCount`, `forkCount`, `issues(states:OPEN)`, `pullRequests(states:OPEN)`, `diskUsage`, and `licenseInfo.name` — same single query, no new query; `_parse_repository` updated accordingly |
+| `github_client/__init__.py` | **Unchanged** — no new symbols were introduced (Option A required none) |
+| `tests/test_github_client.py` | 8 new tests added (topics, license_name, the two semantic decisions, null-handling for `diskUsage` and missing `topics`), all existing fixtures extended with the new fields |
+
+### 12.5 Verification evidence
+
+- **Deterministic mocked suite:** 75/75 tests pass (67 pre-existing + 8 new), 0.5s, no live dependency.
+- **Full project suite:** 76 passed, 2 skipped (pre-existing, unrelated Postgres/Redis connectivity skips).
+- **Live verification:** 35/35 checks passed against the real GitHub API across two repositories (`octocat/Hello-World`, `facebook/react`), covering: correct types/values for all seven new fields on both clients; REST/GraphQL cross-client agreement on every new field, including the two semantic decisions above; `license_name`/`topics` confirmed populated on a repository that actually has them (the first attempt used `octocat/Hello-World`, which has neither — a test-assumption error, not a client defect, caught and corrected before drawing conclusions); every pre-existing 1.1 behavior re-verified live and unaffected — `RateLimiter` composition, `with_retry` composition, `RepositoryNotFoundError` on both clients' 404/`NOT_FOUND` paths.
+
+### 12.6 Confirmation: no existing API contract broken
+
+- `GitHubRESTClient.get_repository(owner, repo) -> RepositoryData` — signature unchanged.
+- `GitHubGraphQLClient.get_repository(owner, repo) -> RepositoryData` / `.execute(query, variables) -> dict` — signatures unchanged.
+- `OwnerSummary` — unchanged, as instructed.
+- All seven new `RepositoryData` fields carry defaults; both `_parse_repository` methods construct `RepositoryData` with keyword arguments exclusively (confirmed by inspection, both before and after this change) — no positional-construction breakage possible.
+- No change to `github_client/retry.py`, `github_client/rate_limiter.py`, `github_client/exceptions.py`, `config/settings.py`, or `logging_setup.py`.
+- Every test and live-verification result from this checkpoint's original sign-off (§§1–11 above) re-passes unmodified after this change.
+
+**This addendum does not reopen Checkpoint 1.1's architecture** — it is a bounded, additive extension of its already-defined "parsing API responses" responsibility, made under the same review discipline as the original checkpoint, with one real defect (the `watchers_count` semantic mismatch) caught by live verification and fixed before documentation.
+

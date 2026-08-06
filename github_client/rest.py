@@ -5,6 +5,13 @@ IMPLEMENTATION_ROADMAP.md Checkpoint 1.1's Definition of Done. Returns
 validated Python objects only — no database writes, no retries, no
 throttling, no GraphQL. Those are 1.1.d (rate limiter), 1.1.e (retry),
 1.1.f (GraphQL), and Checkpoint 1.3 (storage) respectively.
+
+2026-08-06 additive extension (Checkpoint 1.3 impact analysis): RepositoryData
+gained topics/license_name/stars_count/forks_count/watchers_count/
+open_issues_count/size_kb, all parsed from the same single endpoint above -
+no new endpoint added. See CHECKPOINT_1_1_FINAL_REPORT.md's addendum for the
+full rationale (RepositoryData stays a flat API DTO; repository_snapshot
+remains a database-only concern, not a Python object).
 """
 
 from __future__ import annotations
@@ -55,6 +62,18 @@ class RepositoryData:
     `repositories` table (MIGRATION_002_REPORT.md) so Checkpoint 1.3 can
     map this object to a row with minimal translation. This client does
     not write to the database — mapping/storage remains 1.3's job.
+
+    `topics`/`license_name`/`stars_count`/`forks_count`/`watchers_count`/
+    `open_issues_count`/`size_kb` are an additive extension (Checkpoint
+    1.3 impact analysis, 2026-08-06) for the `topics`/`repository_topics`/
+    `licenses`/`repository_snapshot` tables. All carry defaults so this
+    remains backward compatible with any existing construction. Deliberately
+    flat, not a nested RepositorySnapshot object - RepositoryData is an API
+    transport DTO, not the domain model; repository_snapshot is a distinct
+    database table (a persistence concern), not a distinct Python shape, per
+    the explicit architecture decision preceding this change. Populated from
+    the same single GET /repos/{owner}/{repo} response already fetched - no
+    new endpoint.
     """
 
     github_id: int
@@ -69,6 +88,13 @@ class RepositoryData:
     pushed_at: str | None
     owner: OwnerSummary
     rate_limit: RateLimitInfo | None
+    topics: tuple[str, ...] = ()
+    license_name: str | None = None
+    stars_count: int = 0
+    forks_count: int = 0
+    watchers_count: int = 0
+    open_issues_count: int = 0
+    size_kb: int = 0
 
 
 class GitHubRESTClient:
@@ -159,6 +185,13 @@ class GitHubRESTClient:
                 pushed_at=payload.get("pushed_at"),
                 owner=owner,
                 rate_limit=rate_limit,
+                topics=tuple(payload.get("topics") or ()),
+                license_name=license_payload.get("name") if license_payload else None,
+                stars_count=payload["stargazers_count"],
+                forks_count=payload["forks_count"],
+                watchers_count=payload["watchers_count"],
+                open_issues_count=payload["open_issues_count"],
+                size_kb=payload["size"],
             )
         except KeyError as exc:
             raise GitHubAPIError(f"GitHub response missing expected field: {exc}") from exc

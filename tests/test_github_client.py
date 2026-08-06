@@ -359,7 +359,7 @@ def rest_repo_payload(**overrides):
         "full_name": "octocat/Hello-World",
         "description": "My first repository on GitHub!",
         "language": "Python",
-        "license": {"spdx_id": "MIT"},
+        "license": {"spdx_id": "MIT", "name": "MIT License"},
         "archived": False,
         "fork": False,
         "created_at": "2011-01-26T19:01:12Z",
@@ -370,6 +370,12 @@ def rest_repo_payload(**overrides):
             "type": "User",
             "avatar_url": "https://avatars.githubusercontent.com/u/1?v=4",
         },
+        "topics": ["octocat", "atom", "electron", "api"],
+        "stargazers_count": 1234,
+        "forks_count": 567,
+        "watchers_count": 1234,
+        "open_issues_count": 42,
+        "size": 890,
     }
     payload.update(overrides)
     return payload
@@ -399,6 +405,40 @@ class TestGitHubRESTClient:
         assert repo.owner.login == "octocat"
         assert repo.owner.account_type == "User"
         assert repo.rate_limit == RateLimitInfo(5000, 4999, 1700000000, 1, "core")
+        assert repo.topics == ("octocat", "atom", "electron", "api")
+        assert repo.license_name == "MIT License"
+        assert repo.stars_count == 1234
+        assert repo.forks_count == 567
+        assert repo.watchers_count == 1234
+        assert repo.open_issues_count == 42
+        assert repo.size_kb == 890
+
+    def test_missing_topics_key_defaults_to_empty_tuple(self):
+        payload = rest_repo_payload()
+        del payload["topics"]
+        session = FakeSession(FakeResponse(200, payload, RATE_LIMIT_HEADERS))
+        client = GitHubRESTClient(settings=make_settings(), session=session)
+
+        repo = client.get_repository("octocat", "Hello-World")
+        assert repo.topics == ()
+
+    def test_no_license_means_no_license_name(self):
+        payload = rest_repo_payload(license=None)
+        session = FakeSession(FakeResponse(200, payload, RATE_LIMIT_HEADERS))
+        client = GitHubRESTClient(settings=make_settings(), session=session)
+
+        repo = client.get_repository("octocat", "Hello-World")
+        assert repo.license_spdx_id is None
+        assert repo.license_name is None
+
+    def test_missing_stars_count_raises_generic_api_error(self):
+        payload = rest_repo_payload()
+        del payload["stargazers_count"]
+        session = FakeSession(FakeResponse(200, payload, RATE_LIMIT_HEADERS))
+        client = GitHubRESTClient(settings=make_settings(), session=session)
+
+        with pytest.raises(GitHubAPIError):
+            client.get_repository("octocat", "Hello-World")
 
     def test_request_uses_bearer_token_and_required_headers(self):
         session = FakeSession(FakeResponse(200, rest_repo_payload(), RATE_LIMIT_HEADERS))
@@ -495,7 +535,7 @@ def graphql_repository_payload(**overrides):
         "nameWithOwner": "octocat/Hello-World",
         "description": "My first repository on GitHub!",
         "primaryLanguage": {"name": "Python"},
-        "licenseInfo": {"spdxId": "MIT"},
+        "licenseInfo": {"spdxId": "MIT", "name": "MIT License"},
         "isArchived": False,
         "isFork": False,
         "createdAt": "2011-01-26T19:01:12Z",
@@ -506,6 +546,19 @@ def graphql_repository_payload(**overrides):
             "databaseId": 1,
             "avatarUrl": "https://avatars.githubusercontent.com/u/1?v=4",
         },
+        "repositoryTopics": {
+            "nodes": [
+                {"topic": {"name": "octocat"}},
+                {"topic": {"name": "atom"}},
+                {"topic": {"name": "electron"}},
+                {"topic": {"name": "api"}},
+            ]
+        },
+        "stargazerCount": 1234,
+        "forkCount": 567,
+        "issues": {"totalCount": 30},
+        "pullRequests": {"totalCount": 12},
+        "diskUsage": 890,
     }
     payload.update(overrides)
     return payload
@@ -528,6 +581,71 @@ class TestGitHubGraphQLClient:
         assert repo.license_spdx_id == "MIT"
         assert repo.owner.login == "octocat"
         assert repo.owner.account_type == "User"
+        assert repo.topics == ("octocat", "atom", "electron", "api")
+        assert repo.license_name == "MIT License"
+        assert repo.stars_count == 1234
+        assert repo.forks_count == 567
+        assert repo.watchers_count == 1234
+        assert repo.size_kb == 890
+
+    def test_watchers_count_mirrors_stars_not_graphql_watchers_connection(self):
+        """watchers_count must match REST's semantics (a near-duplicate of
+        stars_count, per QUERY_DRIVEN_SCHEMA_DESIGN.md), not GraphQL's
+        `watchers` connection (the old, unmerged notification-subscriber
+        count) - live-verified divergent for the same real repository."""
+        session = FakeSession(
+            FakeResponse(200, graphql_success_body(graphql_repository_payload(stargazerCount=9999)))
+        )
+        client = GitHubGraphQLClient(settings=make_settings(), session=session)
+
+        repo = client.get_repository("octocat", "Hello-World")
+        assert repo.watchers_count == 9999
+        assert repo.watchers_count == repo.stars_count
+
+    def test_open_issues_count_sums_issues_and_pull_requests(self):
+        """REST's open_issues_count counts issues AND pull requests (GitHub's
+        REST API treats every PR as an issue). GraphQL separates them, so this
+        client must sum issues(OPEN) + pullRequests(OPEN) to match REST's
+        semantics - the Checkpoint 1.3 impact analysis engineering decision."""
+        session = FakeSession(
+            FakeResponse(
+                200,
+                graphql_success_body(
+                    graphql_repository_payload(issues={"totalCount": 30}, pullRequests={"totalCount": 12})
+                ),
+            )
+        )
+        client = GitHubGraphQLClient(settings=make_settings(), session=session)
+
+        repo = client.get_repository("octocat", "Hello-World")
+        assert repo.open_issues_count == 42  # 30 issues + 12 PRs, matching REST semantics
+
+    def test_missing_topics_nodes_key_raises_generic_api_error(self):
+        payload = graphql_repository_payload()
+        del payload["repositoryTopics"]
+        session = FakeSession(FakeResponse(200, graphql_success_body(payload)))
+        client = GitHubGraphQLClient(settings=make_settings(), session=session)
+
+        with pytest.raises(GitHubAPIError):
+            client.get_repository("octocat", "Hello-World")
+
+    def test_no_license_means_no_license_name(self):
+        payload = graphql_repository_payload(licenseInfo=None)
+        session = FakeSession(FakeResponse(200, graphql_success_body(payload)))
+        client = GitHubGraphQLClient(settings=make_settings(), session=session)
+
+        repo = client.get_repository("octocat", "Hello-World")
+        assert repo.license_spdx_id is None
+        assert repo.license_name is None
+
+    def test_null_disk_usage_defaults_to_zero(self):
+        """diskUsage is nullable in GitHub's GraphQL schema (e.g. empty repos)."""
+        payload = graphql_repository_payload(diskUsage=None)
+        session = FakeSession(FakeResponse(200, graphql_success_body(payload)))
+        client = GitHubGraphQLClient(settings=make_settings(), session=session)
+
+        repo = client.get_repository("octocat", "Hello-World")
+        assert repo.size_kb == 0
 
     def test_rate_limit_parsed_point_based(self):
         session = FakeSession(
