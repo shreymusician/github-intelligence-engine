@@ -167,7 +167,14 @@ class GitHubGraphQLClient:
             raise GitHubAPIError(f"GraphQL response was not valid JSON: {exc}") from exc
 
         errors = payload.get("errors")
-        if errors:
+        if errors and not all(error.get("type") == "NOT_FOUND" for error in errors):
+            # NOT_FOUND-type errors accompany a legitimately-null field (GitHub's
+            # normal partial-response pattern) - the caller (e.g. get_repository())
+            # is better positioned to raise a correctly-populated
+            # RepositoryNotFoundError using the owner/repo it already knows, rather
+            # than this generic method guessing from the GraphQL error path. Any
+            # other error type (FORBIDDEN, RATE_LIMITED, syntax errors, ...) is
+            # raised here immediately as a generic failure.
             self._raise_for_graphql_errors(errors)
 
         data = payload.get("data")
@@ -189,14 +196,12 @@ class GitHubGraphQLClient:
 
     @staticmethod
     def _raise_for_graphql_errors(errors: list[dict]) -> None:
-        for error in errors:
-            if error.get("type") == "NOT_FOUND":
-                # Best-effort extraction of owner/name from the error path,
-                # falling back to a generic message if the shape is unexpected.
-                path = error.get("path") or []
-                raise RepositoryNotFoundError(
-                    owner=str(path[0]) if path else "unknown", repo=str(path[1]) if len(path) > 1 else "unknown"
-                )
+        """Raised only for non-NOT_FOUND errors - see execute()'s comment.
+        Deliberately generic: this method has no query-specific knowledge
+        of what a null field means, so it cannot correctly classify beyond
+        GitHubAPIError. Callers with that context (e.g. get_repository())
+        raise more specific exceptions themselves.
+        """
         raise GitHubAPIError(f"GraphQL query returned errors: {errors}")
 
     def get_repository(self, owner: str, repo: str) -> RepositoryData:
