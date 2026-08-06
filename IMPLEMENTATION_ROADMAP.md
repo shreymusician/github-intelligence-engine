@@ -348,11 +348,13 @@ Each milestone shows status visually. As checkpoints complete, the milestone pro
 
 **Timeline:** Week 2-3
 
-**Status:** ⭕ Not Started
+**Status:** 🟡 In Progress (1.1 complete, 1.2 deferred for V1, 1.3 active)
 
 ---
 
 ## Checkpoint 1.1: GitHub API Client
+
+**Status:** ✅ Complete — see `CHECKPOINT_1_1_FINAL_REPORT.md` (sub-checkpoints 1.1.a–1.1.h)
 
 **Purpose:** Build reliable client for GitHub REST and GraphQL APIs with rate limit handling
 
@@ -396,7 +398,15 @@ Each milestone shows status visually. As checkpoints complete, the milestone pro
 
 ## Checkpoint 1.2: GitHub Archive Integration
 
-**Purpose:** Enable querying historical repository data from GitHub Archive (BigQuery)
+**Status:** ⏸ **Deferred for V1 (Architecture Preserved)** — see `docs/architecture/adr/ADR_004_DEFER_BIGQUERY_FOR_V1.md`
+
+**Why deferred:** Version 1's actual acquisition target is 100–1,000 "carefully selected" repositories (`SYSTEM_ARCHITECTURE.md` §8). Checkpoint 1.1's authenticated GitHub REST + GraphQL clients (5,000 requests/hour) comfortably clear that target via GitHub's own Search API — no rate-limit pressure exists at this scale. BigQuery's entire value proposition (no rate limits, bulk historical discovery) is a mitigation for the 10,000+ repository, Version 2+ scale problem (`SYSTEM_ARCHITECTURE.md` §7 Challenge 1, §9), not something V1 needs. Deferring avoids introducing a new external dependency (GCP project, billing, service-account credentials) that would add complexity without helping reach the V1 milestone.
+
+**Why this does not change the long-term architecture:** Every deliverable and Definition of Done item below remains the intended design for when this checkpoint is implemented — nothing here is cancelled, removed, or redesigned. `SYSTEM_ARCHITECTURE.md`'s Data Collection Layer still names GitHub Archive (BigQuery) as a first-class source; this checkpoint entry is preserved exactly so implementation can resume from this same specification later.
+
+**When it should be implemented:** When repository acquisition needs to scale beyond what REST/GraphQL rate limits comfortably support — concretely, when targeting the Version 2 tier (`SYSTEM_ARCHITECTURE.md` §9, "From 1,000 to 10,000 Repositories") or when a specific need for GitHub Archive's historical event data (e.g., long-range trend analysis, Checkpoint 3.6) arises sooner. See the ADR's "Future Reversal Conditions" for the precise trigger.
+
+**Which future milestone requires it:** Milestone 1's Version 2 follow-on (repository corpus growth past ~1,000–10,000) and/or Checkpoint 3.6 (Technology Trend Analysis), whichever comes first.
 
 **Expected Deliverables**
 - BigQuery connection and authentication
@@ -439,8 +449,10 @@ Each milestone shows status visually. As checkpoints complete, the milestone pro
 
 **Purpose:** Build complete pipeline to collect and store 100 initial repositories
 
+**Selection strategy (revised — see `ADR_004_DEFER_BIGQUERY_FOR_V1.md`):** Repository selection uses GitHub's REST Search API (`GET /search/repositories`, via the Checkpoint 1.1 client), not GitHub Archive/BigQuery. This is a direct consequence of deferring Checkpoint 1.2 — sufficient at V1's 100–1,000 repository target, revisit if/when Checkpoint 1.2 is implemented.
+
 **Expected Deliverables**
-- Repository selection logic (which 100 to fetch)
+- Repository selection logic (which 100 to fetch) — via GitHub REST Search API
 - Data fetching orchestration
 - Storage to PostgreSQL
 - Progress tracking and logging
@@ -454,7 +466,7 @@ Each milestone shows status visually. As checkpoints complete, the milestone pro
 
 **Prerequisites**
 - GitHub API client (1.1)
-- GitHub Archive integration (1.2)
+- ~~GitHub Archive integration (1.2)~~ — **no longer a prerequisite; 1.2 is deferred for V1 (see above)**
 - Database schema (0.2)
 
 **Estimated Complexity:** Medium (6-8 hours)
@@ -634,13 +646,13 @@ Each milestone shows status visually. As checkpoints complete, the milestone pro
 
 ## Milestone 1 Summary
 
-**Overall Status:** ⭕ Not Started (0/7 checkpoints complete)
+**Overall Status:** 🟡 In Progress (1/7 complete, 1/7 deferred, 5/7 not started)
 
 | Checkpoint | Status | Completion | Notes |
 |-----------|--------|------------| ------|
-| 1.1 - GitHub API Client | ⭕ Not Started | 0% | |
-| 1.2 - GitHub Archive | ⭕ Not Started | 0% | |
-| 1.3 - Acquisition Pipeline | ⭕ Not Started | 0% | |
+| 1.1 - GitHub API Client | ✅ Complete | 100% | `CHECKPOINT_1_1_FINAL_REPORT.md` |
+| 1.2 - GitHub Archive | ⏸ Deferred for V1 (architecture preserved) | N/A | `ADR_004_DEFER_BIGQUERY_FOR_V1.md` |
+| 1.3 - Acquisition Pipeline | 🟡 Active (planning) | 0% | Selection via GitHub REST Search API (1.1), not BigQuery |
 | 1.4 - Content Download | ⭕ Not Started | 0% | |
 | 1.5 - Validation | ⭕ Not Started | 0% | |
 | 1.6 - Incremental Updates | ⭕ Not Started | 0% | |

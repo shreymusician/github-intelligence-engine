@@ -2,13 +2,27 @@
 # ENVIRONMENT & SECRETS
 # ============================================================================
 # NEVER commit actual secrets or .env files with real credentials
-.env                      # Actual environment variables (local only)
-.env.local               # Alternative local env file
-.env.*.local             # Environment-specific local files
-*.pem                    # Private keys
-*.key                    # Private keys
-secrets.json            # Local secrets file
-PAT*.txt                # Personal access token scratch files (found tracked pre-.gitignore; untracked in Checkpoint 1.1.d cleanup)
+#
+# NOTE: every pattern below previously had an inline trailing "# comment"
+# on the same line (e.g. ".env    # Actual environment variables"). Gitignore
+# syntax does not support inline comments - "#" is only a comment when it is
+# the first character of a line - so each pattern was silently matching a
+# literal filename containing "#" and spaces, never the real file. Fixed as
+# part of the Checkpoint 1.1 security history rewrite (2026-08-06); verified
+# with `git check-ignore -v` after the fix.
+# Actual environment variables (local only)
+.env
+# Alternative local env file
+.env.local
+# Environment-specific local files
+.env.*.local
+# Private keys
+*.pem
+*.key
+# Local secrets file
+secrets.json
+# Personal access token scratch files (found tracked pre-.gitignore; untracked in Checkpoint 1.1.d cleanup)
+PAT*.txt
 
 # ============================================================================
 # PYTHON
