@@ -67,8 +67,8 @@ class FakeSession:
         self._exception = exception
         self.calls = []
 
-    def get(self, url, headers=None, timeout=None):
-        self.calls.append({"url": url, "headers": headers, "timeout": timeout})
+    def get(self, url, headers=None, timeout=None, params=None):
+        self.calls.append({"url": url, "headers": headers, "timeout": timeout, "params": params})
         if self._exception is not None:
             raise self._exception
         return self._response
@@ -515,6 +515,90 @@ class TestGitHubRESTClient:
 
         repo = client.get_repository("octocat", "Hello-World")
         assert repo.rate_limit is None
+
+
+def search_response_payload(*items, total_count=None, incomplete_results=False):
+    items = items or (rest_repo_payload(),)
+    return {
+        "total_count": total_count if total_count is not None else len(items),
+        "incomplete_results": incomplete_results,
+        "items": list(items),
+    }
+
+
+SEARCH_RATE_LIMIT_HEADERS = dict(RATE_LIMIT_HEADERS, **{"X-RateLimit-Resource": "search"})
+
+
+class TestGitHubRESTClientSearch:
+    """github_client.rest.GitHubRESTClient.search_repositories (Checkpoint 1.3.a)."""
+
+    def test_search_parses_page_and_items(self):
+        session = FakeSession(
+            FakeResponse(200, search_response_payload(rest_repo_payload(), total_count=1), SEARCH_RATE_LIMIT_HEADERS)
+        )
+        client = GitHubRESTClient(settings=make_settings(), session=session)
+
+        page = client.search_repositories(query="language:python stars:>=100")
+
+        assert page.total_count == 1
+        assert page.incomplete_results is False
+        assert len(page.items) == 1
+        assert page.items[0].full_name == "octocat/Hello-World"
+        assert page.items[0].rate_limit.resource == "search"
+
+    def test_search_sends_query_params_and_headers(self):
+        session = FakeSession(FakeResponse(200, search_response_payload(), SEARCH_RATE_LIMIT_HEADERS))
+        client = GitHubRESTClient(settings=make_settings(), session=session)
+
+        client.search_repositories(query="language:python stars:>=100", sort="stars", order="desc", per_page=50, page=2)
+
+        call = session.calls[0]
+        assert call["url"] == "https://api.github.com/search/repositories"
+        assert call["params"] == {
+            "q": "language:python stars:>=100",
+            "sort": "stars",
+            "order": "desc",
+            "per_page": 50,
+            "page": 2,
+        }
+        assert call["headers"]["Authorization"] == f"Bearer {TEST_TOKEN}"
+
+    def test_search_401_raises_authentication_error(self):
+        session = FakeSession(FakeResponse(401, {}, {}))
+        client = GitHubRESTClient(settings=make_settings(), session=session)
+
+        with pytest.raises(AuthenticationError):
+            client.search_repositories(query="language:python")
+
+    def test_search_403_exhausted_search_quota_raises_rate_limit_exceeded_error(self):
+        headers = dict(SEARCH_RATE_LIMIT_HEADERS, **{"X-RateLimit-Remaining": "0"})
+        session = FakeSession(FakeResponse(403, {}, headers))
+        client = GitHubRESTClient(settings=make_settings(), session=session)
+
+        with pytest.raises(RateLimitExceededError):
+            client.search_repositories(query="language:python")
+
+    def test_search_422_invalid_query_raises_generic_api_error(self):
+        session = FakeSession(FakeResponse(422, {}, {}))
+        client = GitHubRESTClient(settings=make_settings(), session=session)
+
+        with pytest.raises(GitHubAPIError) as exc_info:
+            client.search_repositories(query="not a valid query:::")
+        assert exc_info.value.status_code == 422
+
+    def test_search_missing_expected_field_raises_generic_api_error(self):
+        session = FakeSession(FakeResponse(200, {"incomplete_results": False, "items": []}, {}))
+        client = GitHubRESTClient(settings=make_settings(), session=session)
+
+        with pytest.raises(GitHubAPIError):
+            client.search_repositories(query="language:python")
+
+    def test_search_network_failure_raises_generic_api_error(self):
+        session = FakeSession(exception=requests.ConnectionError("DNS failure"))
+        client = GitHubRESTClient(settings=make_settings(), session=session)
+
+        with pytest.raises(GitHubAPIError):
+            client.search_repositories(query="language:python")
 
 
 # ---------------------------------------------------------------------------

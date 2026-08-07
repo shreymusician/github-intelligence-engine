@@ -13,13 +13,14 @@ from github_client.exceptions import (
 )
 from github_client.graphql import GitHubGraphQLClient
 from github_client.rate_limiter import DEFAULT_SAFETY_MARGIN, RateLimitInfo, RateLimiter
-from github_client.rest import GitHubRESTClient, OwnerSummary, RepositoryData
+from github_client.rest import GitHubRESTClient, OwnerSummary, RepositoryData, RepositorySearchPage
 from github_client.retry import RetryPolicy, with_retry
 
 __all__ = [
     "GitHubRESTClient",
     "GitHubGraphQLClient",
     "RepositoryData",
+    "RepositorySearchPage",
     "OwnerSummary",
     "RateLimitInfo",
     "RateLimiter",

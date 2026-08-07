@@ -12,6 +12,15 @@ open_issues_count/size_kb, all parsed from the same single endpoint above -
 no new endpoint added. See CHECKPOINT_1_1_FINAL_REPORT.md's addendum for the
 full rationale (RepositoryData stays a flat API DTO; repository_snapshot
 remains a database-only concern, not a Python object).
+
+2026-08-07 additive extension (Checkpoint 1.3.a): added search_repositories(),
+a second endpoint (GET /search/repositories), for acquisition/selection.py's
+candidate-selection use. get_repository() is unchanged. Search API items share
+the same response shape as get_repository()'s single-repo response, so
+_parse_repository() is reused, not duplicated. Search responses carry their
+own, stricter rate-limit bucket (X-RateLimit-Resource: search, ~30/min vs the
+core 5,000/hour) - RateLimitInfo.from_headers()/RateLimiter already handle
+this generically via the existing `resource` field, no new logic needed.
 """
 
 from __future__ import annotations
@@ -97,11 +106,27 @@ class RepositoryData:
     size_kb: int = 0
 
 
+@dataclass(frozen=True)
+class RepositorySearchPage:
+    """One page of GET /search/repositories results, mirroring that
+    endpoint's response shape (total_count/incomplete_results/items) the
+    same way RepositoryData mirrors GET /repos/{owner}/{repo}'s. Pagination
+    across pages is the caller's responsibility (acquisition/selection.py,
+    Checkpoint 1.3.a) - this is one page, faithfully parsed, nothing more.
+    """
+
+    total_count: int
+    incomplete_results: bool
+    items: tuple[RepositoryData, ...]
+
+
 class GitHubRESTClient:
     """Thin, synchronous wrapper around the GitHub REST API.
 
-    Deliberately narrow: one method, one endpoint. Rate limiting and
-    retries are explicitly NOT implemented here (Checkpoints 1.1.d/1.1.e).
+    Two endpoints: GET /repos/{owner}/{repo} (1.1.c) and GET
+    /search/repositories (1.3.a, additive). Rate limiting and retries are
+    explicitly NOT implemented here (Checkpoints 1.1.d/1.1.e) - callers
+    compose github_client.retry/rate_limiter around either method.
     """
 
     def __init__(self, settings: Settings | None = None, session: requests.Session | None = None) -> None:
@@ -160,6 +185,76 @@ class GitHubRESTClient:
             )
 
         return self._parse_repository(response.json(), rate_limit)
+
+    def search_repositories(
+        self,
+        query: str,
+        sort: str = "stars",
+        order: str = "desc",
+        per_page: int = 100,
+        page: int = 1,
+    ) -> RepositorySearchPage:
+        """Fetch one page of GET /search/repositories results.
+
+        Raises AuthenticationError (401), RateLimitExceededError (403 with
+        the search-specific rate-limit bucket exhausted), GitHubAPIError (422
+        invalid query syntax, any other non-200 status, malformed response,
+        or network failure). Does not paginate or filter - one request, one
+        page, faithfully parsed; a caller (acquisition/selection.py) composes
+        multiple calls for pagination and result-count enforcement.
+        """
+        url = f"{_API_BASE}/search/repositories"
+        params = {"q": query, "sort": sort, "order": order, "per_page": per_page, "page": page}
+        started = time.monotonic()
+
+        try:
+            response = self._session.get(url, headers=self._headers(), params=params, timeout=_TIMEOUT_SECONDS)
+        except requests.RequestException as exc:
+            log.error("github_search_request_failed url=%s error=%s", url, exc.__class__.__name__)
+            raise GitHubAPIError(f"Network failure requesting {url}: {exc}") from exc
+
+        duration_ms = int((time.monotonic() - started) * 1000)
+        rate_limit = RateLimitInfo.from_headers(response.headers)
+        log.info(
+            "github_search_response url=%s status=%s duration_ms=%s rate_remaining=%s query=%s page=%s",
+            url,
+            response.status_code,
+            duration_ms,
+            rate_limit.remaining if rate_limit else "unknown",
+            query,
+            page,
+        )
+
+        if response.status_code == 401:
+            raise AuthenticationError()
+
+        if response.status_code == 403:
+            if rate_limit is not None and rate_limit.remaining == 0:
+                raise RateLimitExceededError(rate_limit.reset_at)
+            raise GitHubAPIError(
+                f"GitHub returned 403 for search query {query!r} (not a rate-limit exhaustion)",
+                status_code=403,
+            )
+
+        if response.status_code == 422:
+            raise GitHubAPIError(f"Invalid search query: {query!r}", status_code=422)
+
+        if response.status_code != 200:
+            raise GitHubAPIError(
+                f"Unexpected status {response.status_code} for search query {query!r}",
+                status_code=response.status_code,
+            )
+
+        body = response.json()
+        try:
+            items = tuple(self._parse_repository(item, rate_limit) for item in body["items"])
+            return RepositorySearchPage(
+                total_count=body["total_count"],
+                incomplete_results=body["incomplete_results"],
+                items=items,
+            )
+        except KeyError as exc:
+            raise GitHubAPIError(f"GitHub search response missing expected field: {exc}") from exc
 
     @staticmethod
     def _parse_repository(payload: dict, rate_limit: RateLimitInfo | None) -> RepositoryData:
