@@ -4,9 +4,19 @@ Loads and validates the environment variables Checkpoint 1.1 (GitHub API
 Client) needs: GITHUB_TOKEN (required) and LOG_LEVEL (optional, default
 INFO, consumed by Checkpoint 1.1.b's logger).
 
+2026-08-07 additive extension (Checkpoint 1.3.b): exposes the five
+POSTGRES_* variables that already exist in .env (read today only by
+alembic/env.py) so acquisition/storage.py can connect without a second,
+divergent settings mechanism. Names and defaults mirror alembic/env.py
+exactly (POSTGRES_USER, POSTGRES_USER_PASSWORD, POSTGRES_HOST,
+POSTGRES_PORT, POSTGRES_DB) — not invented here. None of these are
+required (no fail-fast) since not every caller of get_settings() needs a
+database connection; a real connection failure surfaces naturally when
+RepositoryWriter attempts to connect.
+
 Deliberately excludes: YAML configuration, multiple environment profiles,
-secret-manager integration, and any variable not read by Checkpoint 1.1
-(e.g. POSTGRES_*, REDIS_*, ENVIRONMENT). Those remain Checkpoint 0.4's
+secret-manager integration, and any variable not read by Checkpoint 1.1 or
+1.3.b (e.g. REDIS_*, ENVIRONMENT). Those remain Checkpoint 0.4's
 responsibility.
 """
 
@@ -39,9 +49,19 @@ class Settings:
 
     github_token: str
     log_level: str
+    postgres_host: str = "localhost"
+    postgres_port: str = "5432"
+    postgres_db: str = "ai_analytics"
+    postgres_user: str = "repo_user"
+    postgres_password: str = "repo_password"
 
     def __repr__(self) -> str:  # pragma: no cover - trivial
-        return f"Settings(github_token='***redacted***', log_level={self.log_level!r})"
+        return (
+            f"Settings(github_token='***redacted***', log_level={self.log_level!r}, "
+            f"postgres_host={self.postgres_host!r}, postgres_port={self.postgres_port!r}, "
+            f"postgres_db={self.postgres_db!r}, postgres_user={self.postgres_user!r}, "
+            f"postgres_password='***redacted***')"
+        )
 
 
 def _require(name: str) -> str:
@@ -77,7 +97,15 @@ def load_settings() -> Settings:
     log_level_raw = os.environ.get("LOG_LEVEL", "INFO")
     log_level = _validate_log_level("LOG_LEVEL", log_level_raw)
 
-    return Settings(github_token=github_token, log_level=log_level)
+    return Settings(
+        github_token=github_token,
+        log_level=log_level,
+        postgres_host=os.environ.get("POSTGRES_HOST", "localhost"),
+        postgres_port=os.environ.get("POSTGRES_PORT", "5432"),
+        postgres_db=os.environ.get("POSTGRES_DB", "ai_analytics"),
+        postgres_user=os.environ.get("POSTGRES_USER", "repo_user"),
+        postgres_password=os.environ.get("POSTGRES_USER_PASSWORD", "repo_password"),
+    )
 
 
 _settings: Settings | None = None
