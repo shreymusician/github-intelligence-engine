@@ -1,14 +1,15 @@
 """Repository acquisition package — Checkpoint 1.3.
 
-selection.py (1.3.a) and storage.py (1.3.b) are implemented so far:
-repository candidate selection via GitHub's Search API, and persisting
-RepositoryData into PostgreSQL. Orchestration (1.3.c) - tying selection,
-fetch (Checkpoint 1.1), and storage into one run - remains a separate,
-not-yet-implemented sub-checkpoint; see IMPLEMENTATION_ROADMAP.md's
-Checkpoint 1.3 breakdown.
+selection.py (1.3.a), storage.py (1.3.b), and pipeline.py (1.3.c) are
+implemented: repository candidate selection via GitHub's Search API,
+persisting RepositoryData into PostgreSQL, and orchestrating the two
+into one batch run. Sub-checkpoint 1.3.d and later (see
+IMPLEMENTATION_ROADMAP.md's Checkpoint 1.3 breakdown) are not yet
+implemented.
 """
 
 from acquisition.exceptions import AcquisitionStorageError, RepositoryPersistenceError
+from acquisition.pipeline import AcquisitionPipeline, AcquisitionStats, PipelineResult, RepositoryFailure
 from acquisition.selection import RepositorySelector, SelectionCriteria
 from acquisition.storage import RepositoryWriter
 
@@ -18,4 +19,8 @@ __all__ = [
     "RepositoryWriter",
     "AcquisitionStorageError",
     "RepositoryPersistenceError",
+    "AcquisitionPipeline",
+    "AcquisitionStats",
+    "PipelineResult",
+    "RepositoryFailure",
 ]
