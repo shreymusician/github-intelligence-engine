@@ -415,6 +415,97 @@ class TestStatisticsAccuracy:
         assert {f.stage for f in result.failures} == {"fetch", "storage"}
 
 
+class TestCrossLayerComposition:
+    """Wires the REAL RepositorySelector (1.3.a) and REAL RepositoryWriter
+    (1.3.b) — not pipeline-level fakes — into a REAL AcquisitionPipeline
+    (1.3.c). Doubles only the true I/O boundary: the GitHub HTTP client's
+    search/fetch methods, and the storage layer's database connection
+    (tests.test_storage's FakeConnection/FakeIdRegistry). Proves selection
+    -> fetch -> rate-limit check -> storage -> result accounting compose
+    correctly using the genuine production classes, deterministically, with
+    no live GitHub or PostgreSQL dependency — Checkpoint 1.3.d's own
+    "cross-layer behaviour" requirement, distinct from the fakes-of-fakes
+    scenarios above (which isolate AcquisitionPipeline's own logic) and
+    from tests/test_storage.py (which isolates RepositoryWriter's own SQL).
+    """
+
+    def test_selection_through_storage_composes_end_to_end(self):
+        from acquisition.selection import RepositorySelector
+        from acquisition.storage import RepositoryWriter
+        from github_client.rest import RepositorySearchPage
+        from tests.test_storage import FakeConnection, FakeIdRegistry, make_repo_data
+
+        repo = make_repo_data("octocat/Hello-World", github_id=1, topics=("ml", "data-science"))
+        search_query = "stars:>=0 archived:false"
+
+        class FullGitHubClientDouble:
+            """Doubles both endpoints RepositorySelector/AcquisitionPipeline
+            call — search_repositories() (selection) and get_repository()
+            (fetch) — the only real I/O boundary in this composed run."""
+
+            def __init__(self):
+                self.search_calls = 0
+                self.fetch_calls = []
+
+            def search_repositories(self, query, sort="stars", order="desc", per_page=100, page=1):
+                assert query == search_query
+                self.search_calls += 1
+                return RepositorySearchPage(total_count=1, incomplete_results=False, items=(repo,))
+
+            def get_repository(self, owner, repo_name):
+                self.fetch_calls.append(f"{owner}/{repo_name}")
+                return repo
+
+        client_double = FullGitHubClientDouble()
+        selector = RepositorySelector(client_double)
+        registry = FakeIdRegistry()
+        fake_conn = FakeConnection(registry)
+        writer = RepositoryWriter(connection_factory=lambda: fake_conn)
+        pipeline = AcquisitionPipeline(client_double, selector, writer, rate_limiter=no_wait_rate_limiter())
+
+        result = pipeline.run(SelectionCriteria(max_results=1))
+
+        assert client_double.search_calls == 1
+        assert client_double.fetch_calls == ["octocat/Hello-World"]
+        assert result.stats == AcquisitionStats(
+            candidates_selected=1, attempted=1, succeeded=1, failed=0, skipped_duplicates=0
+        )
+        assert len(result.repository_ids) == 1
+        assert registry.row_count("repositories") == 1
+        assert registry.row_count("topics") == 2
+        assert fake_conn.committed is True
+
+    def test_storage_failure_in_composed_run_is_isolated_and_recorded(self):
+        from acquisition.selection import RepositorySelector
+        from acquisition.storage import RepositoryWriter
+        from github_client.rest import RepositorySearchPage
+        from tests.test_storage import FakeConnection, make_repo_data
+
+        repo = make_repo_data("octocat/Hello-World", github_id=1)
+        search_query = "stars:>=0 archived:false"
+
+        class FullGitHubClientDouble:
+            def search_repositories(self, query, sort="stars", order="desc", per_page=100, page=1):
+                return RepositorySearchPage(total_count=1, incomplete_results=False, items=(repo,))
+
+            def get_repository(self, owner, repo_name):
+                return repo
+
+        client_double = FullGitHubClientDouble()
+        selector = RepositorySelector(client_double)
+        fake_conn = FakeConnection(fail_on="INSERT INTO repositories")
+        writer = RepositoryWriter(connection_factory=lambda: fake_conn)
+        pipeline = AcquisitionPipeline(client_double, selector, writer, rate_limiter=no_wait_rate_limiter())
+
+        result = pipeline.run(SelectionCriteria(max_results=1))
+
+        assert result.stats.succeeded == 0
+        assert result.stats.failed == 1
+        assert result.failures[0].stage == "storage"
+        assert result.failures[0].error_type == "RepositoryPersistenceError"
+        assert fake_conn.rolled_back is True
+
+
 class TestPipelineReusesExistingInfrastructure:
     """Confirms AcquisitionPipeline composes the real, unmodified
     RateLimiter/RetryPolicy/RepositorySelector/RepositoryWriter contracts -
