@@ -66,6 +66,27 @@ _FULL_NAME_PATTERN = re.compile(
 _CLONE_DIR_PREFIX = "ghia_clone_"
 
 
+def _force_remove_readonly(func, path: str, exc: BaseException) -> None:
+    """shutil.rmtree onexc handler: git writes some files (e.g. under
+    .git/objects/pack/) read-only, which rmtree cannot delete on Windows
+    without first clearing the read-only bit. Without this handler,
+    rmtree(..., ignore_errors=True) would silently leave the directory
+    (or part of it) behind instead of actually cleaning it up - discovered
+    via this sub-checkpoint's own live verification, not assumed.
+    """
+    os.chmod(path, stat.S_IWRITE)
+    func(path)
+
+
+def _remove_clone_dir(clone_dir: str, full_name: str) -> None:
+    try:
+        shutil.rmtree(clone_dir, onexc=_force_remove_readonly)
+    except OSError as exc:
+        # Cleanup failure is logged, not raised - this runs in a `finally`
+        # block and must never mask an original clone/extraction error.
+        log.warning("clone_workspace_cleanup_failed full_name=%s path=%s error=%s", full_name, clone_dir, exc)
+
+
 class RepositoryCloner:
     """Shallow-clones repositories into temporary, always-cleaned-up directories.
 
@@ -97,7 +118,7 @@ class RepositoryCloner:
             self._run_git_clone(full_name, clone_dir)
             yield Path(clone_dir)
         finally:
-            shutil.rmtree(clone_dir, ignore_errors=True)
+            _remove_clone_dir(clone_dir, full_name)
 
     def _run_git_clone(self, full_name: str, dest_dir: str) -> None:
         url = f"https://github.com/{full_name}.git"
