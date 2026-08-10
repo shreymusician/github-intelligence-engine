@@ -8,7 +8,13 @@ IMPLEMENTATION_ROADMAP.md's Checkpoint 1.3 breakdown) are not yet
 implemented.
 """
 
-from acquisition.exceptions import AcquisitionStorageError, RepositoryPersistenceError
+from acquisition.clone_workspace import RepositoryCloner
+from acquisition.exceptions import (
+    AcquisitionStorageError,
+    ContentAcquisitionError,
+    RepositoryCloneError,
+    RepositoryPersistenceError,
+)
 from acquisition.pipeline import AcquisitionPipeline, AcquisitionStats, PipelineResult, RepositoryFailure
 from acquisition.selection import RepositorySelector, SelectionCriteria
 from acquisition.storage import RepositoryWriter
@@ -23,4 +29,7 @@ __all__ = [
     "AcquisitionStats",
     "PipelineResult",
     "RepositoryFailure",
+    "RepositoryCloner",
+    "ContentAcquisitionError",
+    "RepositoryCloneError",
 ]

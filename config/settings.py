@@ -54,13 +54,15 @@ class Settings:
     postgres_db: str = "ai_analytics"
     postgres_user: str = "repo_user"
     postgres_password: str = "repo_password"
+    content_clone_timeout_seconds: int = 60
 
     def __repr__(self) -> str:  # pragma: no cover - trivial
         return (
             f"Settings(github_token='***redacted***', log_level={self.log_level!r}, "
             f"postgres_host={self.postgres_host!r}, postgres_port={self.postgres_port!r}, "
             f"postgres_db={self.postgres_db!r}, postgres_user={self.postgres_user!r}, "
-            f"postgres_password='***redacted***')"
+            f"postgres_password='***redacted***', "
+            f"content_clone_timeout_seconds={self.content_clone_timeout_seconds!r})"
         )
 
 
@@ -105,6 +107,7 @@ def load_settings() -> Settings:
         postgres_db=os.environ.get("POSTGRES_DB", "ai_analytics"),
         postgres_user=os.environ.get("POSTGRES_USER", "repo_user"),
         postgres_password=os.environ.get("POSTGRES_USER_PASSWORD", "repo_password"),
+        content_clone_timeout_seconds=int(os.environ.get("CONTENT_CLONE_TIMEOUT_SECONDS", "60")),
     )
 
 
