@@ -9,6 +9,7 @@ implemented.
 """
 
 from acquisition.clone_workspace import RepositoryCloner
+from acquisition.content_extractor import ExtractedFile, extract_content
 from acquisition.exceptions import (
     AcquisitionStorageError,
     ContentAcquisitionError,
@@ -32,4 +33,6 @@ __all__ = [
     "RepositoryCloner",
     "ContentAcquisitionError",
     "RepositoryCloneError",
+    "ExtractedFile",
+    "extract_content",
 ]
