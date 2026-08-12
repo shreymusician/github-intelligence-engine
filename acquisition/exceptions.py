@@ -44,3 +44,19 @@ class RepositoryCloneError(ContentAcquisitionError):
         self.full_name = full_name
         self.reason = reason
         super().__init__(f"Failed to clone repository {full_name!r}: {reason}")
+
+
+class ContentPersistenceError(ContentAcquisitionError):
+    """Raised when persisting ExtractedFile rows to repository_content fails.
+
+    By the time this is raised, ContentWriter's transaction has already
+    been rolled back — no partial rows for the batch survive a failed
+    upsert_content() call.
+    """
+
+    def __init__(self, repository_id: object, cause: Exception) -> None:
+        self.repository_id = repository_id
+        self.cause = cause
+        super().__init__(
+            f"Failed to persist content for repository {repository_id!r}: {cause}"
+        )
