@@ -10,6 +10,14 @@ implemented.
 
 from acquisition.clone_workspace import RepositoryCloner
 from acquisition.content_extractor import ExtractedFile, extract_content
+from acquisition.content_pipeline import (
+    ContentAcquisitionPipeline,
+    ContentAcquisitionResult,
+    ContentAcquisitionStats,
+    ContentFailure,
+    ProcessedRepository,
+    RepositoryContentCandidateProvider,
+)
 from acquisition.content_storage import ContentWriter
 from acquisition.exceptions import (
     AcquisitionStorageError,
@@ -39,4 +47,10 @@ __all__ = [
     "extract_content",
     "ContentWriter",
     "ContentPersistenceError",
+    "ContentAcquisitionPipeline",
+    "ContentAcquisitionResult",
+    "ContentAcquisitionStats",
+    "ContentFailure",
+    "ProcessedRepository",
+    "RepositoryContentCandidateProvider",
 ]
