@@ -1,7 +1,7 @@
 # Checkpoint 2.3 Report — Documentation Quality Assessment (2.3.a / 2.3.b / 2.3.d)
 
 **Parent Checkpoint:** 2.3 (Documentation Quality Assessment)
-**Status:** ✅ Complete for 2.3.a (README structural extraction), 2.3.b (readability scoring), and 2.3.d (storage + orchestration + live verification). **2.3.c (documentation-quality-score composition) was explicitly NOT implemented** — the frozen schema does not clearly specify where that value belongs, per `CHECKPOINT_2_3_DESIGN_REVIEW.md` Sec12 item 1 and your instruction to stop and ask rather than invent architecture. See §8.
+**Status:** ✅ Complete and approved for 2.3.a (README structural extraction), 2.3.b (readability scoring), and 2.3.d (storage + orchestration + live verification). **2.3.c (documentation-quality composite score) is intentionally deferred to Milestone 3** — a final, closed decision, not an open question. See §8.
 
 ---
 
@@ -121,15 +121,19 @@ Reported ranges: word count 143–31,618; section count 0–4; code example coun
 
 Every measured metric is traceable to an actually-computed value — no invented coverage claims.
 
-## 8. Explicitly Not Implemented — 2.3.c (STOP, Awaiting Your Direction)
+## 8. 2.3.c — Deferred to Milestone 3 (Final Decision)
 
-Per your instruction ("Only implement this if the frozen design clearly specifies where the resulting deterministic quality score belongs... If placement or formula is ambiguous, STOP and ask me"), **2.3.c was not implemented**. The ambiguity identified in the design review remains unresolved:
+**2.3.c — Documentation Quality Composite Score is intentionally deferred to Milestone 3. No schema change was introduced because the frozen Milestone-2 feature schema does not specify a storage location for this composite score, while `repository_scores` belongs to the later intelligence/scoring layer.**
 
-- The roadmap's Definition of Done requires "Quality score assigned to each repo," but no dedicated `repository_metrics` column exists for it.
-- `repository_scores` has `score_type='quality'`, but is architecturally a Milestone-3 intelligence table (versioned, `algorithm_version`-stamped) — not a fit for a deterministic Milestone-2 feature.
-- Writing an invented value into `extended_features` JSONB, or adding a migration for a new column, are both live options — but neither is clearly specified by the frozen design, and you explicitly told me not to repurpose `repository_scores`, not to add a column/table/migration, and not to put Milestone-3 intelligence into Milestone-2 storage without explicit direction.
+This is now a closed decision, not an open question. Per your explicit direction: no migration, no new column, no new table, no JSON-field workaround, and no write to `repository_scores` were introduced to store a composite score. The five deterministic documentation features below are the complete, final Milestone-2 feature-extraction scope for Checkpoint 2.3:
 
-**I need your decision before 2.3.c can proceed.** No quality-score code, formula, or persistence path has been written.
+- `readme_present`
+- `readme_word_count`
+- `readme_section_count`
+- `readme_code_example_count`
+- `readme_readability_score`
+
+The composite score's placement and its relationship to the overall repository quality score will be designed properly when Milestone 3 (repository-intelligence/scoring layer) begins — not before, and not as a Milestone-2 schema workaround.
 
 ## 9. Files Changed
 
@@ -187,6 +191,17 @@ Grepped all new/modified files for `password|secret|api[_-]?key|token|BEGIN (RSA
 
 `git status --short` is clean (no untracked or modified files) as of this report, aside from this report itself pending its commit. Scratchpad ad hoc verification scripts (outside the repository, in the session's temp scratchpad directory) were deleted after use.
 
+## 14a. Post-Approval Re-Verification Pass
+
+Before finalizing, every checklist item was independently re-confirmed against live state (not re-asserted from memory):
+
+- Full regression suite re-run: 449 passed, 4 pre-existing skips.
+- 84 tests confirmed collected across `test_readme_parser.py` (29), `test_readability.py` (25), `test_documentation_storage.py` (12), `test_documentation_pipeline.py` (18).
+- Live `repository_metrics` re-queried directly: 91 rows, all `readme_present=true`, word/section/code-example/readability ranges identical to the original run (143–31,618 / 0–4 / 0–83 / 23.19–87.30), zero duplicate `(repository_id, snapshot_date)` pairs, zero rows with any non-documentation column populated.
+- **Idempotency re-confirmed by actually re-running the full 91-repository pipeline a second time** (not just inferred from the absence of duplicates): result was again `succeeded=91, failed=0`, row count stayed at 91, no duplicates introduced, computed feature values unchanged, and `computed_at` timestamps unchanged (expected — `computed_at` is not in this writer's `DO UPDATE SET` clause, so it is preserved across reruns, matching the same "don't touch what you don't own" discipline as `first_detected_at` in 2.2.b).
+- `git fetch origin main` run, then `git rev-parse HEAD` and `git rev-parse origin/main` compared directly: equal.
+- Scratchpad and repository both re-checked for stray temporary scripts: none found.
+
 ## 15. Stop Condition
 
-Per your instruction: **2.3.a, 2.3.b, and 2.3.d (for the schema-supported fields) are complete. Stopping here.** 2.3.c remains blocked pending your explicit decision on quality-score placement (§8). No work has begun on 2.4, 2.5, Milestone 3, AI, embeddings, search, recommendations, frontend, or any other unrelated feature. Awaiting your review and direction on 2.3.c.
+Checkpoint 2.3 is complete and approved: 2.3.a, 2.3.b, and 2.3.d are the final Milestone-2 feature-extraction scope for documentation quality. 2.3.c is closed as deferred to Milestone 3 (§8) — not a pending question. No work has begun on 2.4, 2.5, 2.6, 2.7, Milestone 3, embeddings, semantic search, AI/LLM features, frontend/UI, Google Cloud/BigQuery, Maps/Earth, or any other feature. Stopping here per instruction, awaiting further review.
