@@ -24,3 +24,17 @@ class TechnologyPersistenceError(ProcessingError):
         self.repository_id = repository_id
         self.cause = cause
         super().__init__(f"Failed to persist technologies for repository {repository_id!r}: {cause}")
+
+
+class DocumentationPersistenceError(ProcessingError):
+    """Raised when persisting documentation metrics to PostgreSQL fails.
+
+    By the time this is raised, DocumentationMetricsWriter's transaction
+    has already been rolled back — no partial row survives a failed
+    upsert_documentation_metrics() call.
+    """
+
+    def __init__(self, repository_id: object, cause: Exception) -> None:
+        self.repository_id = repository_id
+        self.cause = cause
+        super().__init__(f"Failed to persist documentation metrics for repository {repository_id!r}: {cause}")
